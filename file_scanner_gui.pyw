@@ -1060,7 +1060,7 @@ class ScannerApp:
         def _toggle_vt_show():
             self._vt_show = not self._vt_show
             self._vt_entry.config(show="" if self._vt_show else "*")
-            btn_eye.config(text="🙈" if self._vt_show else "👁")
+            btn_eye.config(text="👁" if self._vt_show else "👁")
         btn_eye = tk.Button(vt_entry_row, text="👁",
                             font=("Consolas", 8), bg=self.BG3, fg=self.DIMFG,
                             activebackground=self.BG2, borderwidth=0,
