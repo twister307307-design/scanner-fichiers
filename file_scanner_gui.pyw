@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v4.3 - Interface Graphique
+Scanner de Fichiers Avancé v5.8 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
+Nouveautés v5.8 :
+  - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
+    (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
+Nouveautés v4.6 :
+  - Clé API VirusTotal toujours visible sous la case (pas besoin de cocher d'abord)
+Nouveautés v4.5 :
+  - Ajout de .icns et .3mf dans la liste blanche entropie (faux positifs corrigés)
+    (.icns = icônes macOS compressées, .3mf = fichiers 3D = ZIP interne)
+Nouveautés v4.4 :
+  - Doublons stricts (même chemin relatif) activé en permanence et automatiquement
+    (suppression de la case à cocher — comportement h24 sans intervention)
 Nouveautés v4.3 :
   - Option doublons stricts : vérification du chemin relatif en plus du contenu
     (évite les faux doublons entre dossiers frères, ex: profils Bambu Studio)
@@ -48,6 +59,12 @@ try:
 except ImportError:
     HAS_PIL = False
 
+try:
+    import pystray
+    HAS_PYSTRAY = True
+except ImportError:
+    HAS_PYSTRAY = False
+
 # ─── Config persistante ───────────────────────────────────────────────────────
 
 CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".scanner_config.json")
@@ -70,7 +87,7 @@ def load_config():
         "var_detect_encrypted": True,
         "schedule_hours": 0,
         "var_schedule_enabled": False,
-        "var_strict_dupes": True,
+        "var_strict_dupes": True,   # toujours activé — non modifiable via UI
     }
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -289,6 +306,8 @@ def is_file_encrypted_suspect(filepath, size):
                         ".mp3", ".mp4", ".avi", ".mkv", ".mov", ".flac", ".aac", ".ogg",
                         # Images
                         ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico",
+                        # Icônes macOS (format compressé par nature)
+                        ".icns",
                         # Exécutables / libs (compressés/signés par nature)
                         ".exe", ".dll", ".so", ".dylib",
                         # Paquets applicatifs Microsoft / AppX
@@ -304,6 +323,12 @@ def is_file_encrypted_suspect(filepath, size):
                         ".pdf", ".docx", ".xlsx", ".pptx", ".odt",
                         # Bases de données / caches
                         ".db", ".sqlite", ".ldb", ".pak",
+                        # Fichiers 3D impression (ZIP compressé internement : .3mf, .amf…)
+                        ".3mf", ".amf",
+                        # Tor Browser / Firefox (archives JAR compressées)
+                        ".ja",
+                        # Profils Intel Graphics
+                        ".igpi",
                     }
                     if ext not in safe_high_entropy:
                         return True, f"entropie élevée ({entropy:.2f}/8.0) — possible chiffrement"
@@ -544,7 +569,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v4.3")
+        self.root.title("Scanner de Fichiers Avancé v5.8")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -564,6 +589,10 @@ class ScannerApp:
         self._ext_stats    = defaultdict(lambda: {"count": 0, "size": 0})
         # v3.0
         self._schedule_timer = None
+        self._tray_icon      = None
+        self._hidden         = False
+        self._update_status  = "checking"
+        self._remote_version = ""
         self._suspects_data  = []   # liste de (path, reason, score, vt_detections)
 
         self._build_ui()
@@ -571,13 +600,268 @@ class ScannerApp:
         self._poll_queue()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    def _check_update_async(self):
+        def _run():
+            try:
+                req = urllib.request.Request(GITHUB_VER_URL, headers={"User-Agent": "ScannerFichiers"})
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    remote = r.read().decode().strip()
+                def vt(v): return tuple(int(x) for x in v.strip().split("."))
+                if vt(remote) > vt(CURRENT_VERSION):
+                    self._update_status = "available"
+                    self._remote_version = remote
+                    self.root.after(0, lambda: self.btn_update.config(
+                        text=f"MAJ v{remote} dispo !", fg="#ffb300"))
+                else:
+                    self._update_status = "up_to_date"
+                    self.root.after(0, lambda: self.btn_update.config(
+                        text="A jour", fg=self.GREEN))
+            except Exception:
+                self._update_status = "offline"
+                self.root.after(0, lambda: self.btn_update.config(
+                    text="Hors ligne", fg=self.DIMFG))
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _open_update_window(self):
+        win = tk.Toplevel(self.root)
+        win.title("Connexion & Mises a jour")
+        win.resizable(False, False)
+        win.configure(bg=self.BG)
+        win.grab_set()
+        self.root.update_idletasks()
+        px = self.root.winfo_x() + self.root.winfo_width()  // 2
+        py = self.root.winfo_y() + self.root.winfo_height() // 2
+        w, h = 440, 290
+        win.geometry(f"{w}x{h}+{px - w//2}+{py - h//2}")
+
+        tk.Label(win, text="Connexion & Mises a jour",
+                 font=("Consolas", 10, "bold"), fg=self.ACCENT, bg=self.BG).pack(pady=(18, 4))
+        tk.Label(win, text=f"Version actuelle : v{CURRENT_VERSION}",
+                 font=("Consolas", 8), fg=self.DIMFG, bg=self.BG).pack()
+
+        lbl_status = tk.Label(win, text="Verification en cours...",
+                 font=("Consolas", 8), fg=self.DIMFG, bg=self.BG)
+        lbl_status.pack(pady=(12, 0))
+        lbl_ver = tk.Label(win, text="", font=("Consolas", 8, "bold"), fg=self.ACCENT, bg=self.BG)
+        lbl_ver.pack()
+
+        prog = ttk.Progressbar(win, mode="indeterminate", length=300)
+
+        btn_upd = tk.Button(win, text="Telecharger et installer la mise a jour",
+                 font=("Consolas", 8, "bold"), bg=self.ACCENT, fg="#000",
+                 activebackground=self.BG2, borderwidth=0, padx=12, pady=6,
+                 cursor="hand2", relief=tk.FLAT, state=tk.DISABLED,
+                 command=lambda: self._do_update(win, lbl_status, prog, btn_upd))
+        btn_upd.pack(pady=(16, 4))
+
+        tk.Button(win, text="Fermer", font=("Consolas", 8), bg=self.BG3, fg=self.DIMFG,
+                 activebackground=self.BG2, borderwidth=0, padx=10, pady=4,
+                 cursor="hand2", relief=tk.FLAT, command=win.destroy).pack()
+
+        tk.Label(win, text=f"github.com/{GITHUB_USER}/{GITHUB_REPO}",
+                 font=("Consolas", 7), fg=self.DIMFG, bg=self.BG).pack(side=tk.BOTTOM, pady=8)
+
+        def _check():
+            try:
+                req = urllib.request.Request(GITHUB_VER_URL, headers={"User-Agent": "ScannerFichiers"})
+                with urllib.request.urlopen(req, timeout=6) as r:
+                    remote = r.read().decode().strip()
+                def vt(v): return tuple(int(x) for x in v.strip().split("."))
+                if vt(remote) > vt(CURRENT_VERSION):
+                    self._remote_version = remote
+                    self._update_status = "available"
+                    win.after(0, lambda: [
+                        lbl_status.config(text="Nouvelle version disponible !", fg="#ffb300"),
+                        lbl_ver.config(text=f"v{CURRENT_VERSION}  -->  v{remote}"),
+                        btn_upd.config(state=tk.NORMAL),
+                        self.btn_update.config(text=f"MAJ v{remote} dispo !", fg="#ffb300"),
+                    ])
+                else:
+                    self._update_status = "up_to_date"
+                    win.after(0, lambda: [
+                        lbl_status.config(text="Vous avez la derniere version.", fg=self.GREEN),
+                        lbl_ver.config(text=f"v{CURRENT_VERSION}  (a jour)"),
+                        self.btn_update.config(text="A jour", fg=self.GREEN),
+                    ])
+            except Exception:
+                self._update_status = "offline"
+                win.after(0, lambda: [
+                    lbl_status.config(text="Impossible de contacter le serveur.", fg=self.RED),
+                    lbl_ver.config(text="Verifiez votre connexion internet."),
+                    self.btn_update.config(text="Hors ligne", fg=self.DIMFG),
+                ])
+        threading.Thread(target=_check, daemon=True).start()
+
+    def _do_update(self, win, lbl_status, prog, btn_upd):
+        btn_upd.config(state=tk.DISABLED, text="Telechargement...")
+        prog.pack(pady=6)
+        prog.start(12)
+        def _dl():
+            try:
+                import sys
+                req = urllib.request.Request(GITHUB_RAW_URL, headers={"User-Agent": "ScannerFichiers"})
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    new_code = r.read()
+                current = os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__)
+                tmp = current + ".tmp"
+                with open(tmp, "wb") as f:
+                    f.write(new_code)
+                os.replace(tmp, current)
+                win.after(0, lambda: self._restart_after_update(win, lbl_status, prog))
+            except Exception as e:
+                win.after(0, lambda: [
+                    prog.stop(), prog.pack_forget(),
+                    lbl_status.config(text=f"Erreur : {e}", fg=self.RED),
+                    btn_upd.config(state=tk.NORMAL, text="Reessayer"),
+                ])
+        threading.Thread(target=_dl, daemon=True).start()
+
+    def _restart_after_update(self, win, lbl_status, prog):
+        import sys, subprocess
+        prog.stop()
+        lbl_status.config(text="Mise a jour installee ! Relance en cours...", fg=self.GREEN)
+        win.after(1500, lambda: [
+            win.destroy(),
+            subprocess.Popen([sys.executable, os.path.abspath(__file__)]),
+            self.root.destroy(),
+        ])
+
+    def _uninstall(self):
+        import subprocess, sys
+        confirm = messagebox.askyesno(
+            "Desinstaller le Scanner",
+            "Voulez-vous vraiment desinstaller le Scanner de Fichiers ?\n\n"
+            "Vos fichiers personnels ne seront pas touches.",
+            icon="warning")
+        if not confirm:
+            return
+        exe_dir = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else __file__)
+        uninstall_bat = os.path.join(exe_dir, "uninstall.bat")
+        if os.path.exists(uninstall_bat):
+            subprocess.Popen(["cmd.exe", "/c", uninstall_bat], creationflags=0x00000008)
+            self.root.destroy()
+        else:
+            messagebox.showerror("Desinstallation",
+                f"uninstall.bat introuvable.\nSupprimez manuellement : {exe_dir}")
+
+    def _show_window(self):
+        """Restaure la fenêtre depuis l'arrière-plan."""
+        self._hidden = False
+        self.root.deiconify()
+        self.root.state("normal")
+        self.root.lift()
+        self.root.focus_force()
+        if self._tray_icon is not None:
+            try:
+                self._tray_icon.stop()
+            except Exception:
+                pass
+            self._tray_icon = None
+
     def _on_close(self):
-        self.cfg["geometry"] = self.root.geometry()
-        self.cfg["last_scan_roots"] = list(self.roots_list.get(0, tk.END))
-        save_config(self.cfg)
-        if self._schedule_timer is not None:
-            self._schedule_timer.cancel()
-        self.root.destroy()
+        """Demande à l'utilisateur : réduire en arrière-plan ou fermer complètement."""
+        # Si un scan est en cours, proposer arrière-plan par défaut
+        scanning = self.scan_thread is not None and self.scan_thread.is_alive()
+
+        win = tk.Toplevel(self.root)
+        win.title("Fermer le scanner")
+        win.resizable(False, False)
+        win.configure(bg=self.BG)
+        win.grab_set()
+
+        self.root.update_idletasks()
+        px = self.root.winfo_x() + self.root.winfo_width()  // 2
+        py = self.root.winfo_y() + self.root.winfo_height() // 2
+        w, h = 400, 210
+        win.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
+
+        tk.Label(win, text="Que voulez-vous faire ?",
+                 font=("Consolas", 10, "bold"), fg=self.ACCENT, bg=self.BG
+                 ).pack(pady=(18, 4))
+
+        if scanning:
+            info = "Un scan est en cours."
+        else:
+            info = "Le scanner peut continuer en arrière-plan\n(scan planifié actif)."
+        tk.Label(win, text=info, font=("Consolas", 8),
+                 fg=self.DIMFG, bg=self.BG, justify="center").pack(pady=(0, 14))
+
+        btn_row = tk.Frame(win, bg=self.BG)
+        btn_row.pack()
+
+        def _background():
+            win.destroy()
+            self.cfg["geometry"] = self.root.geometry()
+            self.cfg["last_scan_roots"] = list(self.roots_list.get(0, tk.END))
+            save_config(self.cfg)
+            self.root.withdraw()
+            self._hidden = True
+            self._start_tray_icon()
+
+        def _quit_full():
+            win.destroy()
+            self.cfg["geometry"] = self.root.geometry()
+            self.cfg["last_scan_roots"] = list(self.roots_list.get(0, tk.END))
+            save_config(self.cfg)
+            if self._schedule_timer is not None:
+                self._schedule_timer.cancel()
+            if self._tray_icon is not None:
+                try:
+                    self._tray_icon.stop()
+                except Exception:
+                    pass
+            self.root.destroy()
+
+        tk.Button(btn_row, text="🔽  Réduire en arrière-plan",
+                  font=("Consolas", 8, "bold"), bg=self.BG3, fg=self.ACCENT,
+                  activebackground=self.BG2, activeforeground=self.ACCENT,
+                  borderwidth=0, padx=14, pady=6, cursor="hand2", relief=tk.FLAT,
+                  command=_background).pack(side=tk.LEFT, padx=6)
+
+        tk.Button(btn_row, text="✕  Fermer complètement",
+                  font=("Consolas", 8), bg=self.BG3, fg=self.RED,
+                  activebackground=self.BG2, activeforeground=self.RED,
+                  borderwidth=0, padx=14, pady=6, cursor="hand2", relief=tk.FLAT,
+                  command=_quit_full).pack(side=tk.LEFT, padx=6)
+
+        win.bind("<Escape>", lambda e: win.destroy())
+
+    def _start_tray_icon(self):
+        """Lance une icône dans la zone de notification (systray) si pystray est dispo."""
+        if self._tray_icon is not None:
+            return  # déjà actif
+
+        def _show(icon, item):
+            icon.stop()
+            self._tray_icon = None
+            self.root.after(0, self.root.deiconify)
+
+        def _quit(icon, item):
+            icon.stop()
+            self._tray_icon = None
+            if self._schedule_timer is not None:
+                self._schedule_timer.cancel()
+            self.root.after(0, self.root.destroy)
+
+        if HAS_PYSTRAY and HAS_PIL:
+            # Icône 64x64 simple bleue avec loupe
+            img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            from PIL import ImageDraw
+            d = ImageDraw.Draw(img)
+            d.ellipse([8, 8, 44, 44], fill="#00d4ff", outline="#ffffff", width=3)
+            d.ellipse([14, 14, 38, 38], fill="#0f1117")
+            d.line([38, 38, 56, 56], fill="#ffffff", width=5)
+            menu = pystray.Menu(
+                pystray.MenuItem("🔍 Rouvrir le scanner", _show, default=True),
+                pystray.MenuItem("✕ Quitter", _quit),
+            )
+            icon = pystray.Icon("scanner", img, "Scanner de Fichiers v5.8", menu)
+            self._tray_icon = icon
+            threading.Thread(target=icon.run, daemon=True).start()
+        else:
+            # Pas de pystray : la fenêtre est juste masquée (withdraw).
+            # Le process reste visible dans la barre des tâches Windows — pas besoin de widget supplémentaire.
+            pass
 
     # ── Thème ──────────────────────────────────────────────────────────────────
 
@@ -608,7 +892,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v4.3",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v5.8",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -625,6 +909,21 @@ class ScannerApp:
                             borderwidth=0, padx=8, pady=2, cursor="hand2", relief=tk.FLAT,
                             command=lambda n=tname: self._apply_theme(n))
             btn.pack(side=tk.LEFT, padx=2)
+
+        # Bouton Désinstaller (haut droite)
+        tk.Button(header, text="Desinstaller",
+                 font=("Consolas", 7), bg=self.BG3, fg=self.RED,
+                 activebackground=self.RED, activeforeground="#fff",
+                 borderwidth=0, padx=8, pady=3, cursor="hand2", relief=tk.FLAT,
+                 command=self._uninstall).place(relx=1.0, rely=0.0, anchor="ne", x=-10, y=6)
+
+        # Bouton Connexion / MAJ
+        self.btn_update = tk.Button(header, text="Connexion...",
+                 font=("Consolas", 7), bg=self.BG3, fg=self.DIMFG,
+                 activebackground=self.BG2, activeforeground=self.ACCENT,
+                 borderwidth=0, padx=8, pady=3, cursor="hand2", relief=tk.FLAT,
+                 command=self._open_update_window)
+        self.btn_update.place(relx=1.0, rely=0.0, anchor="ne", x=-110, y=6)
 
         body = tk.Frame(self.root, bg=self.BG)
         body.pack(fill=tk.BOTH, expand=True, padx=14, pady=10)
@@ -670,7 +969,7 @@ class ScannerApp:
         self.var_quarantine     = tk.BooleanVar(value=self.cfg.get("var_quarantine", False))
         self.var_detect_encrypted = tk.BooleanVar(value=self.cfg.get("var_detect_encrypted", True))
         self.var_schedule_enabled = tk.BooleanVar(value=self.cfg.get("var_schedule_enabled", False))
-        self.var_strict_dupes   = tk.BooleanVar(value=self.cfg.get("var_strict_dupes", True))
+        self.var_strict_dupes   = tk.BooleanVar(value=True)  # toujours activé (fixé en dur)
 
         for text, var, color, tip in [
             # ── Analyse ──
@@ -686,22 +985,6 @@ class ScannerApp:
                                 font=("Consolas", 8))
             cb.pack(anchor="w")
             Tooltip(cb, tip)
-
-        # Option doublons stricts (sous-option indentée)
-        row_strict = tk.Frame(self._opt_frame, bg=self.BG)
-        row_strict.pack(fill=tk.X, pady=(0, 2))
-        cb_strict = tk.Checkbutton(row_strict,
-                                   text="  ↳ Strict : même chemin relatif",
-                                   variable=self.var_strict_dupes,
-                                   bg=self.BG, fg=self.DIMFG, selectcolor=self.BG3,
-                                   activebackground=self.BG, activeforeground=self.FG,
-                                   font=("Consolas", 7))
-        cb_strict.pack(anchor="w")
-        Tooltip(cb_strict,
-                "Évite les faux doublons entre dossiers frères\n"
-                "(ex: profils Anycubic/ vs Elegoo/ dans Bambu Studio).\n"
-                "Coché = doublon seulement si même chemin relatif identique.\n"
-                "Décoché = doublon dès que contenu identique (comportement original).")
 
         tk.Label(self._opt_frame, text="  — Actions —",
                  font=("Consolas", 7, "italic"), fg=self.DIMFG, bg=self.BG).pack(anchor="w", pady=(4, 0))
@@ -745,12 +1028,11 @@ class ScannerApp:
                                variable=self.var_virustotal,
                                bg=self.BG, fg="#ff6d00", selectcolor=self.BG3,
                                activebackground=self.BG, activeforeground="#ff6d00",
-                               font=("Consolas", 8),
-                               command=self._toggle_vt_key_row)
+                               font=("Consolas", 8))
         cb_vt.pack(side=tk.LEFT)
         Tooltip(cb_vt, "Envoie le hash MD5 des suspects à VirusTotal")
 
-        # Bloc clé API VT — affiché SOUS la case, masqué si décochée
+        # Bloc clé API VT — toujours affiché sous la case VirusTotal
         self._vt_key_row = tk.Frame(self._opt_frame, bg=self.BG2,
                                     padx=8, pady=6, relief=tk.FLAT, bd=1)
         # Ligne titre + bouton aide
@@ -786,9 +1068,8 @@ class ScannerApp:
                             command=_toggle_vt_show)
         btn_eye.pack(side=tk.LEFT)
         Tooltip(btn_eye, "Afficher / masquer la clé API")
-        # Afficher ou non selon l'état initial de la case
-        if self.var_virustotal.get():
-            self._vt_key_row.pack(fill=tk.X, pady=(4, 4))
+        # Toujours visible
+        self._vt_key_row.pack(fill=tk.X, pady=(4, 4))
 
         # ── Scan planifié ──
         tk.Frame(self._opt_frame, bg=self.DIMFG, height=1).pack(fill=tk.X, pady=(4, 4))
@@ -894,6 +1175,7 @@ class ScannerApp:
         self.log_dupes, self.btn_del_dupes = self._log_tab_with_action(
             notebook, "🟣 Doublons", "🗑  Supprimer les doublons", self._manual_delete_dupes, self.PURPLE)
         self.log_errors    = self._log_tab(notebook, "🟠 Chiffrés")
+        self.log_access_errors = self._log_tab(notebook, "🟡 Erreurs accès")
         self.tab_stats     = self._build_stats_tab(notebook)
 
         # Compteurs sous-catégories indispo
@@ -1063,12 +1345,6 @@ class ScannerApp:
                           text=f"{label}  {format_size(size)}  ({pct:.1f}%)",
                           fill=self.FG, font=("Consolas", 7))
 
-    def _toggle_vt_key_row(self):
-        if self.var_virustotal.get():
-            self._vt_key_row.pack(fill=tk.X, pady=(4, 4))
-        else:
-            self._vt_key_row.pack_forget()
-
 
     def _toggle_schedule_row(self):
         if self.var_schedule_enabled.get():
@@ -1100,6 +1376,7 @@ plus de 70 antivirus à la fois.
 
 1. Ouvrez ce lien dans votre navigateur :
    https://www.virustotal.com/gui/home/upload
+
 2. Créez un compte (email + mot de passe).
 
 3. Une fois connecté, cliquez sur votre nom d'utilisateur
@@ -1745,6 +2022,132 @@ Lien documentation API :
 
     # ── Scan ───────────────────────────────────────────────────────────────────
 
+    def _prompt_vt_api_key(self):
+        """Petite fenêtre modale pour saisir la clé API VirusTotal quand elle est absente."""
+        win = tk.Toplevel(self.root)
+        win.title("Clé API VirusTotal requise")
+        win.resizable(False, False)
+        win.configure(bg=self.BG)
+        win.grab_set()
+
+        # Centrer sur la fenêtre principale
+        self.root.update_idletasks()
+        px = self.root.winfo_x() + self.root.winfo_width()  // 2
+        py = self.root.winfo_y() + self.root.winfo_height() // 2
+        w, h = 420, 230
+        win.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
+
+        # Icône + titre
+        tk.Label(win, text="🔑  Clé API VirusTotal manquante",
+                 font=("Consolas", 10, "bold"), fg="#ff6d00", bg=self.BG
+                 ).pack(pady=(16, 4))
+
+        tk.Label(win,
+                 text="Veuillez saisir correctement la clé API VirusTotal\n"
+                      "pour activer la vérification des fichiers suspects.",
+                 font=("Consolas", 8), fg=self.DIMFG, bg=self.BG, justify="center"
+                 ).pack(pady=(0, 10))
+
+        # Champ de saisie
+        entry_frame = tk.Frame(win, bg=self.BG2, padx=10, pady=6)
+        entry_frame.pack(fill=tk.X, padx=20)
+        tk.Label(entry_frame, text="🔑", font=("Consolas", 9),
+                 fg="#ff6d00", bg=self.BG2).pack(side=tk.LEFT, padx=(0, 6))
+        key_var = tk.StringVar(value=self.vt_key_var.get())
+        entry = tk.Entry(entry_frame, textvariable=key_var,
+                         font=("Consolas", 8), bg=self.BG3, fg=self.FG,
+                         insertbackground=self.FG, borderwidth=0, show="*", width=32)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        entry.focus_set()
+        # Bouton œil dans la popup
+        show_state = [False]
+        def _toggle():
+            show_state[0] = not show_state[0]
+            entry.config(show="" if show_state[0] else "*")
+            btn_eye2.config(text="🙈" if show_state[0] else "👁")
+        btn_eye2 = tk.Button(entry_frame, text="👁",
+                             font=("Consolas", 8), bg=self.BG3, fg=self.DIMFG,
+                             activebackground=self.BG2, borderwidth=0,
+                             cursor="hand2", relief=tk.FLAT, padx=4,
+                             command=_toggle)
+        btn_eye2.pack(side=tk.LEFT, padx=(4, 0))
+
+        # Label erreur (caché par défaut)
+        lbl_err = tk.Label(win, text="", font=("Consolas", 7),
+                           fg=self.RED, bg=self.BG)
+        lbl_err.pack()
+
+        # Boutons Valider / Annuler
+        btn_row = tk.Frame(win, bg=self.BG)
+        btn_row.pack(pady=(6, 0))
+
+        def _set_error(msg):
+            lbl_err.config(text=f"\u26a0  {msg}")
+            entry.config(highlightthickness=1, highlightbackground=self.RED,
+                         highlightcolor=self.RED)
+            btn_validate.config(state=tk.NORMAL, text="\u2714  Valider et lancer le scan")
+            entry.focus_set()
+
+        def _do_validate():
+            val = key_var.get().strip()
+            # 1. Vide
+            if not val:
+                win.after(0, lambda: _set_error("La clé API est vide."))
+                return
+            # 2. Longueur incorrecte
+            if len(val) != 64:
+                win.after(0, lambda: _set_error(f"Clé incomplète ({len(val)}/64 caractères)."))
+                return
+            # 3. Test réel contre l'API VirusTotal (hash MD5 neutre)
+            win.after(0, lambda: lbl_err.config(text="\u23f3  Vérification de la clé en cours...",
+                                                fg=self.ACCENT))
+            try:
+                import urllib.request, urllib.error, json as _json
+                req = urllib.request.Request(
+                    "https://www.virustotal.com/api/v3/files/00000000000000000000000000000000",
+                    headers={"x-apikey": val})
+                urllib.request.urlopen(req, timeout=8)
+                # 200 ou 404 = clé acceptée
+                valid = True
+            except urllib.error.HTTPError as e:
+                valid = e.code == 404   # 404 = hash inconnu mais clé OK ; 401/403 = clé refusée
+            except Exception:
+                valid = True            # erreur réseau : on laisse passer, le scan gèrera
+            if not valid:
+                win.after(0, lambda: _set_error("Clé API refusée par VirusTotal (invalide)."))
+                return
+            # Clé OK
+            def _apply():
+                self.vt_key_var.set(val)
+                win.destroy()
+                self._start_scan()
+            win.after(0, _apply)
+
+        def _validate():
+            btn_validate.config(state=tk.DISABLED, text="\u23f3  Vérification...")
+            lbl_err.config(text="", fg=self.RED)
+            threading.Thread(target=_do_validate, daemon=True).start()
+
+        def _cancel():
+            win.destroy()
+
+        btn_validate = tk.Button(btn_row, text="✔  Valider et lancer le scan",
+                  font=("Consolas", 8, "bold"), bg=self.GREEN, fg="#000",
+                  activebackground=self.BG2, activeforeground=self.GREEN,
+                  borderwidth=0, padx=12, pady=5, cursor="hand2", relief=tk.FLAT,
+                  command=_validate)
+        btn_validate.pack(side=tk.LEFT, padx=6)
+
+        tk.Button(btn_row, text="✕  Annuler",
+                  font=("Consolas", 8), bg=self.BG3, fg=self.RED,
+                  activebackground=self.BG2, activeforeground=self.RED,
+                  borderwidth=0, padx=10, pady=5, cursor="hand2", relief=tk.FLAT,
+                  command=_cancel).pack(side=tk.LEFT, padx=6)
+
+        # Entrée = Valider
+        entry.bind("<Return>", lambda e: _validate())
+        win.bind("<Escape>", lambda e: _cancel())
+
     def _start_scan(self):
         roots = list(self.roots_list.get(0, tk.END))
         if not roots:
@@ -1757,14 +2160,11 @@ Lien documentation API :
         self.scan_roots = valid
         self.stop_event.clear()
         # Vérification clé API VirusTotal si activé
-        if self.var_virustotal.get() and not self.vt_key_var.get().strip():
-            messagebox.showwarning(
-                "🦠 VirusTotal — Clé API manquante",
-                "Vous avez activé la vérification VirusTotal\n"
-                "mais la clé API est vide.\n\n"
-                "Merci de remplir la clé API avant le lancement.\n\n"
-                "💡 Cliquez sur « ? Aide » pour savoir comment en obtenir une gratuitement.")
-            return
+        if self.var_virustotal.get():
+            key = self.vt_key_var.get().strip()
+            if not key or len(key) != 64:
+                self._prompt_vt_api_key()
+                return
 
         self._clear_logs()
         self.results = {}
@@ -2095,10 +2495,22 @@ Lien documentation API :
             if len(self._speed_history) % 5 == 0:
                 self._update_speed_canvas()
         elif t == "corrupted":
-            self._log(self.log_corrupted, f"[{msg['reason']}]\n  {msg['path']}", "red")
+            self._log(self.log_corrupted, f"\n[{msg['reason']}]\n  {msg['path']}", "red")
         elif t == "encrypted":
             self._log(self.log_errors,
-                      f"🔐 [{msg['reason']}]\n  {msg['path']}", "orange")
+                      f"\n🔐 [{msg['reason']}]\n  {msg['path']}", "orange")
+            # Afficher aussi dans l'onglet Suspects (toujours, peu importe VT)
+            _enc_path   = msg["path"]
+            _enc_reason = f"🔐 Chiffrement — {msg['reason']}"
+            _enc_score  = 6   # score par défaut pour entropie élevée
+            _enc_vt     = msg.get("vt", 0)
+            _enc_vt_txt = f"🦠 {_enc_vt}" if _enc_vt > 0 else "—"
+            self._suspects_data.append((_enc_path, _enc_reason, _enc_score, _enc_vt))
+            term = self.var_search.get().lower()
+            if not term or term in _enc_path.lower() or term in _enc_reason.lower():
+                self.tree_suspects.insert("", tk.END,
+                    values=(_enc_score, _enc_path, _enc_reason, _enc_vt_txt),
+                    tags=(f"score_{_enc_score}",))
         elif t == "suspect":
             score   = msg.get("score", 1)
             vt_det  = msg.get("vt", 0)
@@ -2120,14 +2532,14 @@ Lien documentation API :
             self._clean_count_lbl.config(text=f"{self._clean_file_count:,} fichier(s) sain(s)")
         elif t == "duplicate":
             self._log(self.log_dupes,
-                      f"  ✓ ORIGINAL  {msg['original']}\n  ✗ DOUBLON   {msg['duplicate']}", "purple")
+                      f"\n  ✓ ORIGINAL  {msg['original']}\n  ✗ DOUBLON   {msg['duplicate']}", "purple")
             if not hasattr(self, "_dupes_pairs"):
                 self._dupes_pairs = []
             self._dupes_pairs.append((msg["original"], msg["duplicate"]))
             self.results_dupes_count = getattr(self, "results_dupes_count", 0) + 1
             self._card_set(self.card_dupes, str(self.results_dupes_count), flash=True)
         elif t == "error":
-            self._log(self.log_errors, f"[{msg['err']}]\n  {msg['path']}", "yellow")
+            self._log(self.log_access_errors, f"\n[{msg['err']}]\n  {msg['path']}", "yellow")
         elif t == "stopped":
             self._scan_finished(stopped=True)
         elif t == "done":
@@ -2277,7 +2689,7 @@ Lien documentation API :
         w.config(state=tk.DISABLED)
 
     def _clear_logs(self):
-        for w in (self.log_all, self.log_corrupted, self.log_dupes, self.log_errors):
+        for w in (self.log_all, self.log_corrupted, self.log_dupes, self.log_errors, self.log_access_errors):
             w.config(state=tk.NORMAL)
             w.delete("1.0", tk.END)
             w.config(state=tk.DISABLED)
@@ -2737,10 +3149,81 @@ def elevate_and_run_ps(ps_cmd):
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
+# ─── Instance unique + signal "rouvrir" ──────────────────────────────────────
+
+GITHUB_USER     = "twister307307-design"
+GITHUB_REPO     = "scanner-fichiers"
+GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
+GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
+CURRENT_VERSION = "5.8"
+
+LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
+SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
+
+def _is_already_running():
+    """Retourne True si une instance tourne déjà."""
+    if platform.system() == "Windows":
+        import ctypes
+        try:
+            mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "ScannerFichiersAvance_v5")
+            if ctypes.windll.kernel32.GetLastError() == 183:
+                return True
+            return False
+        except Exception:
+            pass
+    # Fallback PID file
+    if os.path.exists(LOCK_PATH):
+        try:
+            with open(LOCK_PATH) as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)
+            return True
+        except (ValueError, OSError):
+            pass
+    try:
+        with open(LOCK_PATH, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
+    return False
+
+
+def _send_show_signal():
+    try:
+        with open(SIGNAL_PATH, "w") as f:
+            f.write("show")
+    except Exception:
+        pass
+
+
 def main():
+    if _is_already_running():
+        _send_show_signal()
+        return
+
     root = tk.Tk()
     app  = ScannerApp(root)
-    root.mainloop()
 
+    def _poll_signal():
+        if os.path.exists(SIGNAL_PATH):
+            try:
+                os.remove(SIGNAL_PATH)
+            except Exception:
+                pass
+            app._show_window()
+        root.after(500, _poll_signal)
+    root.after(2000, app._check_update_async)
+
+    root.after(500, _poll_signal)
+
+    try:
+        root.mainloop()
+    finally:
+        for p in (LOCK_PATH, SIGNAL_PATH):
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except Exception:
+                pass
 if __name__ == "__main__":
     main()
