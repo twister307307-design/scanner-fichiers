@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v6.8 - Interface Graphique
+Scanner de Fichiers Avancé v6.9 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v6.8 :
+Nouveautés v6.9 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -381,10 +381,12 @@ def is_double_extension(filepath):
     fake_ext = "." + parts[-2]
 
     # Extensions exécutables / dangereuses en position finale
+    # (.dll et .sys retirés : trop de fichiers système/légitimes les utilisent
+    #  avec des noms à plusieurs points, ex: api-ms-win.core.dll)
     dangerous = {
         ".exe", ".scr", ".bat", ".cmd", ".com", ".pif", ".vbs", ".vbe",
         ".js", ".jse", ".ws", ".wsf", ".wsh", ".ps1", ".msi", ".jar",
-        ".hta", ".cpl", ".msc", ".reg", ".lnk", ".inf", ".dll", ".sys",
+        ".hta", ".cpl", ".msc", ".reg", ".inf",
     }
     # Fausses extensions trompeuses (documents/médias inoffensifs en apparence)
     decoy = {
@@ -597,7 +599,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v6.8")
+        self.root.title("Scanner de Fichiers Avancé v6.9")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1023,7 +1025,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.8",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.9",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -2462,10 +2464,13 @@ Lien documentation API :
                         is_sys = is_windows_system_file(filepath)
 
                         # ── Détection double extension trompeuse ─────────────────
-                        dbl_flag, dbl_reason = is_double_extension(filepath)
-                        if dbl_flag:
-                            stats["dblext"] += 1
-                            send("dblext", path=filepath, reason=dbl_reason)
+                        # (on ignore les fichiers systeme Windows : certains ont
+                        #  des noms a plusieurs points tout a fait legitimes)
+                        if not is_sys:
+                            dbl_flag, dbl_reason = is_double_extension(filepath)
+                            if dbl_flag:
+                                stats["dblext"] += 1
+                                send("dblext", path=filepath, reason=dbl_reason)
 
                         # ── ÉTAPE 1 : score de suspicion de base ─────────────────
                         susp_flag, susp_reason = is_file_suspicious(filepath, size)
@@ -3347,7 +3352,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "6.8"
+CURRENT_VERSION = "6.9"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
