@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v7.6 - Interface Graphique
+Scanner de Fichiers Avancé v7.7 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v7.6 :
+Nouveautés v7.7 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -672,7 +672,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v7.6")
+        self.root.title("Scanner de Fichiers Avancé v7.7")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1137,7 +1137,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.6",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.7",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -2505,7 +2505,16 @@ Lien documentation API :
         self.pause_event.clear()
         self.btn_pause.config(state=tk.NORMAL, text="⏸  PAUSE")
         self._start_spinner()
+        # Remettre toutes les cartes a zero pour ne pas tromper avec les anciennes valeurs
         try:
+            self._card_set(self.card_scanned,   "0")
+            self._card_set(self.card_size,       format_size(0))
+            self._card_set(self.card_corrupted,  "0")
+            self._card_set(self.card_suspects,   "0")
+            self._card_set(self.card_dupes,      "0")
+            self._card_set(self.card_errors,     "0")
+            self._card_set(self.card_dblext,     "0")
+            self._card_set(self.card_speed,      "0 f/s")
             self._card_set(self.card_score, "--")
             self.card_score._val_label.config(fg=self.GREEN)
         except Exception:
@@ -3757,7 +3766,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "7.6"
+CURRENT_VERSION = "7.7"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
