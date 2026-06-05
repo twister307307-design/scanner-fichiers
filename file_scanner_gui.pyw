@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v7.5 - Interface Graphique
+Scanner de Fichiers Avancé v7.6 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v7.5 :
+Nouveautés v7.6 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -222,6 +222,65 @@ SUSPICIOUS_NAME_PATTERNS = [
     "update_adobe", "update_flash", "setup_free",
 ]
 
+def is_hidden_windows(filepath):
+    """Retourne True si le fichier a l'attribut 'cache' sous Windows."""
+    if platform.system() != "Windows":
+        # Unix : fichier cache = commence par un point
+        return os.path.basename(filepath).startswith(".")
+    try:
+        import ctypes
+        attrs = ctypes.windll.kernel32.GetFileAttributesW(str(filepath))
+        if attrs == -1:
+            return False
+        FILE_ATTRIBUTE_HIDDEN = 0x2
+        return bool(attrs & FILE_ATTRIBUTE_HIDDEN)
+    except Exception:
+        return False
+
+
+def is_hidden_executable(filepath, size):
+    """Detecte un executable CACHE dans un dossier perso (tres suspect).
+    Un .exe/.bat/.scr cache hors des dossiers systeme est un signe classique de malware.
+    """
+    ext = Path(filepath).suffix.lower()
+    exec_exts = {".exe", ".scr", ".bat", ".cmd", ".com", ".pif", ".vbs",
+                 ".js", ".ps1", ".hta", ".jar", ".msi", ".dll"}
+    if ext not in exec_exts:
+        return False, ""
+    if is_windows_system_file(filepath):
+        return False, ""  # normal pour les fichiers systeme
+    if is_hidden_windows(filepath):
+        return True, f"executable CACHE ({ext}) — tres suspect"
+    return False, ""
+
+
+def is_abnormal_size(filepath, size):
+    """Detecte les tailles aberrantes selon le type de fichier.
+    Ex: .jpg de 0 octet, .txt de plusieurs Go, etc.
+    """
+    ext = Path(filepath).suffix.lower()
+
+    # Fichier completement vide (0 octet) avec une extension qui devrait avoir du contenu
+    should_have_content = {
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".pdf", ".docx", ".xlsx",
+        ".pptx", ".mp3", ".mp4", ".avi", ".mkv", ".zip", ".rar", ".exe",
+    }
+    if size == 0 and ext in should_have_content:
+        return True, f"fichier vide anormal (0 octet, {ext})"
+
+    # Fichiers texte/config anormalement enormes (> 500 Mo)
+    text_exts = {".txt", ".log", ".ini", ".cfg", ".csv", ".json", ".xml", ".html", ".md"}
+    if ext in text_exts and size > 500 * 1024 * 1024:
+        return True, f"fichier texte anormalement enorme ({format_size(size)})"
+
+    # Petit "media" deja gere ailleurs, on ajoute les documents minuscules
+    doc_exts = {".pdf", ".docx", ".xlsx", ".pptx"}
+    if ext in doc_exts and 0 < size < 100:
+        return True, f"document anormalement petit ({format_size(size)})"
+
+    return False, ""
+
+
 def is_file_suspicious(filepath, size):
     """Retourne (True, raison) si le fichier est suspect."""
     name = os.path.basename(filepath).lower()
@@ -367,6 +426,16 @@ WINDOWS_SYSTEM_EXTENSIONS = {
     ".sig", ".p7s", ".p7b", ".p12", ".pfx",
     # Paquets données apps (Chrome, Edge, Copilot…)
     ".pak",
+}
+
+# Dossiers volumineux et sans interet a skipper en "scan rapide"
+QUICK_SCAN_SKIP_DIRS = {
+    "windows", "winsxs", "system32", "syswow64", "$recycle.bin",
+    "program files", "program files (x86)", "programdata",
+    "windowsapps", "system volume information", "recovery",
+    "msocache", "$windows.~bt", "$windows.~ws", "drivers",
+    "driverstore", "assembly", "servicing", "installer",
+    "node_modules", "appdata",
 }
 
 def is_double_extension(filepath):
@@ -603,7 +672,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v7.5")
+        self.root.title("Scanner de Fichiers Avancé v7.6")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1068,7 +1137,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.5",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.6",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1146,9 +1215,11 @@ class ScannerApp:
         self.var_detect_encrypted = tk.BooleanVar(value=self.cfg.get("var_detect_encrypted", True))
         self.var_schedule_enabled = tk.BooleanVar(value=self.cfg.get("var_schedule_enabled", False))
         self.var_strict_dupes   = tk.BooleanVar(value=True)  # toujours activé (fixé en dur)
+        self.var_quick_scan     = tk.BooleanVar(value=self.cfg.get("var_quick_scan", False))
 
         for text, var, color, tip in [
             # ── Analyse ──
+            ("⚡ Scan rapide (ignore dossiers système)", self.var_quick_scan, self.GREEN, "Ignore Windows, Program Files... pour aller plus vite"),
             ("Détecter fichiers corrompus",  self.var_corruption,     self.RED,    "Analyse les en-têtes de fichiers"),
             ("🔐 Détecter chiffrement (ransomware)", self.var_detect_encrypted, self.YELLOW, "Détecte entropie élevée + extensions ransomware"),
             ("Trouver les doublons",          self.var_duplicates,     self.PURPLE, "Hash MD5 partiel pour détecter les copies"),
@@ -1372,7 +1443,7 @@ class ScannerApp:
         self.log_dupes, self.btn_del_dupes = self._log_tab_with_action(
             notebook, "🟣 Doublons", "🗑  Supprimer les doublons", self._manual_delete_dupes, self.PURPLE)
         self.log_errors    = self._log_tab(notebook, "🟠 Chiffrés")
-        self.log_dblext    = self._log_tab(notebook, "🔺 Double extension")
+        self.log_dblext    = self._log_tab(notebook, "🔺 Anomalies")
         self.log_access_errors = self._log_tab(notebook, "🟡 Erreurs accès")
         self.tab_stats     = self._build_stats_tab(notebook)
 
@@ -2003,6 +2074,9 @@ Lien documentation API :
 
         if os.path.exists(path):
             menu.add_command(
+                label="📂  Ouvrir l'emplacement (sélectionner)",
+                command=lambda: self._open_in_explorer(path))
+            menu.add_command(
                 label="📁  Ouvrir le dossier parent",
                 command=lambda: self._open_parent(path))
             menu.add_command(
@@ -2012,6 +2086,9 @@ Lien documentation API :
             menu.add_command(
                 label="🗑  Déplacer vers la corbeille",
                 command=lambda: self._trash_suspect(item, path))
+            menu.add_command(
+                label="❌  Supprimer définitivement",
+                command=lambda: self._delete_suspect_permanent(item, path))
         else:
             menu.add_command(label="⚠  Fichier introuvable", state=tk.DISABLED)
 
@@ -2084,6 +2161,40 @@ Lien documentation API :
 
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible de déplacer vers la corbeille :\n{e}")
+
+    def _open_in_explorer(self, path):
+        """Ouvre l'explorateur avec le fichier selectionne (surligne)."""
+        try:
+            if platform.system() == "Windows":
+                import subprocess
+                subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+            elif platform.system() == "Darwin":
+                import subprocess
+                subprocess.Popen(["open", "-R", path])
+            else:
+                self._open_parent(path)
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible d'ouvrir l'emplacement :\n{e}")
+
+    def _delete_suspect_permanent(self, item, path):
+        """Supprime DEFINITIVEMENT un fichier suspect (pas de corbeille)."""
+        filename = os.path.basename(path)
+        ok = messagebox.askyesno(
+            "❌  Supprimer définitivement",
+            f"⚠ ATTENTION : suppression DEFINITIVE (pas de corbeille) !\n\n"
+            f"  {filename}\n\n"
+            f"  {path}\n\n"
+            "Cette action est IRREVERSIBLE. Continuer ?",
+            icon="warning")
+        if not ok:
+            return
+        try:
+            os.remove(path)
+            self.tree_suspects.delete(item)
+            self._suspects_data = [(p, r, s, v) for p, r, s, v in self._suspects_data if p != path]
+            self._log(self.log_all, f"❌  Supprimé définitivement : {path}", "red")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de supprimer :\n{e}")
 
 
 
@@ -2425,6 +2536,7 @@ Lien documentation API :
             "schedule_hours":     self.var_schedule.get(),
             "var_strict_dupes":   self.var_strict_dupes.get(),
             "scan_cores":         self.var_cores.get(),
+            "var_quick_scan":     self.var_quick_scan.get(),
         })
         save_config(self.cfg)
         self.scan_thread = threading.Thread(target=self._scan_worker, daemon=True)
@@ -2461,6 +2573,7 @@ Lien documentation API :
         find_duplicates  = self.var_duplicates.get()
         strict_dupes     = self.var_strict_dupes.get()
         detect_encrypted = self.var_detect_encrypted.get()
+        quick_scan       = self.var_quick_scan.get()
         use_virustotal   = self.var_virustotal.get()
         vt_api_key       = self.vt_key_var.get().strip()
         ram_limit        = self._get_ram_limit_bytes()
@@ -2506,7 +2619,7 @@ Lien documentation API :
         errors     = []
         stats = {"total_size": 0, "corrupted": 0,
                  "suspects": 0, "duplicates": 0, "encrypted": 0, "errors": 0, "scanned": 0,
-                 "dblext": 0}
+                 "dblext": 0, "hidden": 0, "abnormal": 0}
 
         start_time     = time.time()
         last_refresh   = time.time()
@@ -2543,6 +2656,9 @@ Lien documentation API :
 
             for dirpath, dirs, filenames in os.walk(root, followlinks=False):
                 dirs[:] = [d for d in dirs if not d.startswith(".") or root == dirpath]
+                # Scan rapide : ignorer les gros dossiers systeme
+                if quick_scan:
+                    dirs[:] = [d for d in dirs if d.lower() not in QUICK_SCAN_SKIP_DIRS]
                 for filename in filenames:
                     if self.stop_event.is_set():
                         if hash_pool is not None:
@@ -2581,6 +2697,18 @@ Lien documentation API :
                             if dbl_flag:
                                 stats["dblext"] += 1
                                 send("dblext", path=filepath, reason=dbl_reason)
+
+                            # ── Détection executable cache (tres suspect) ─────────
+                            hid_flag, hid_reason = is_hidden_executable(filepath, size)
+                            if hid_flag:
+                                stats["hidden"] += 1
+                                send("hidden", path=filepath, reason=hid_reason)
+
+                            # ── Détection taille aberrante ────────────────────────
+                            abn_flag, abn_reason = is_abnormal_size(filepath, size)
+                            if abn_flag:
+                                stats["abnormal"] += 1
+                                send("abnormal", path=filepath, reason=abn_reason)
 
                         # ── ÉTAPE 1 : score de suspicion de base ─────────────────
                         susp_flag, susp_reason = is_file_suspicious(filepath, size)
@@ -2928,6 +3056,28 @@ Lien documentation API :
             if not term or term in _dx_path.lower() or term in _dx_reason.lower():
                 self.tree_suspects.insert("", tk.END,
                     values=(8, _dx_path, _dx_reason, "—"), tags=("score_8",))
+        elif t == "hidden":
+            # Executable cache = tres suspect, score 9/10
+            self._log(self.log_dblext,
+                      f"\n👁‍🗨 [{msg['reason']}]\n  {msg['path']}", "red")
+            _h_path   = msg["path"]
+            _h_reason = f"👁‍🗨 {msg['reason']}"
+            self._suspects_data.append((_h_path, _h_reason, 9, 0))
+            term = self.var_search.get().lower()
+            if not term or term in _h_path.lower() or term in _h_reason.lower():
+                self.tree_suspects.insert("", tk.END,
+                    values=(9, _h_path, _h_reason, "—"), tags=("score_9",))
+        elif t == "abnormal":
+            # Taille aberrante = score moyen 5/10
+            self._log(self.log_dblext,
+                      f"\n📏 [{msg['reason']}]\n  {msg['path']}", "yellow")
+            _a_path   = msg["path"]
+            _a_reason = f"📏 {msg['reason']}"
+            self._suspects_data.append((_a_path, _a_reason, 5, 0))
+            term = self.var_search.get().lower()
+            if not term or term in _a_path.lower() or term in _a_reason.lower():
+                self.tree_suspects.insert("", tk.END,
+                    values=(5, _a_path, _a_reason, "—"), tags=("score_5",))
         elif t == "stopped":
             self._scan_finished(stopped=True)
         elif t == "device_error":
@@ -3607,7 +3757,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "7.5"
+CURRENT_VERSION = "7.6"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
