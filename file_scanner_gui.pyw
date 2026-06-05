@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v6.6 - Interface Graphique
+Scanner de Fichiers Avancé v6.8 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v6.6 :
+Nouveautés v6.8 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -597,7 +597,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v6.6")
+        self.root.title("Scanner de Fichiers Avancé v6.8")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -629,19 +629,15 @@ class ScannerApp:
 
     def _check_update_async(self):
         global CURRENT_VERSION
-        # Lire la version locale depuis le fichier VERSION si disponible
-        import sys as _sys
-        _exe_dir = os.path.dirname(os.path.abspath(
-            _sys.executable if getattr(_sys, "frozen", False) else __file__))
-        _ver_file = os.path.join(_exe_dir, "VERSION")
-        if os.path.exists(_ver_file):
-            try:
-                _local_ver = open(_ver_file).read().strip()
+        # Lire la version installee depuis la config (pas de fichier VERSION visible)
+        try:
+            _installed = self.cfg.get("installed_version", "")
+            if _installed:
                 def _vt(v): return tuple(int(x) for x in v.strip().split("."))
-                if _vt(_local_ver) > _vt(CURRENT_VERSION):
-                    CURRENT_VERSION = _local_ver
-            except Exception:
-                pass
+                if _vt(_installed) > _vt(CURRENT_VERSION):
+                    CURRENT_VERSION = _installed
+        except Exception:
+            pass
 
         def _run():
             try:
@@ -792,10 +788,10 @@ class ScannerApp:
                     with open(updater, "w") as f:
                         f.write("\r\n".join(bat_lines))
 
-                    # Mettre a jour VERSION
+                    # Memoriser la version installee dans la config
                     try:
-                        with open(os.path.join(exe_dir, "VERSION"), "w") as fv:
-                            fv.write(self._remote_version)
+                        self.cfg["installed_version"] = self._remote_version
+                        save_config(self.cfg)
                     except Exception:
                         pass
 
@@ -808,8 +804,8 @@ class ScannerApp:
                         f.write(new_code)
                     os.replace(tmp, current)
                     try:
-                        with open(os.path.join(exe_dir, "VERSION"), "w") as fv:
-                            fv.write(self._remote_version)
+                        self.cfg["installed_version"] = self._remote_version
+                        save_config(self.cfg)
                     except Exception:
                         pass
                     win.after(0, lambda: self._restart_after_update(win, lbl_status, prog, None, current, is_frozen))
@@ -941,7 +937,7 @@ class ScannerApp:
         self.root.update_idletasks()
         px = self.root.winfo_x() + self.root.winfo_width()  // 2
         py = self.root.winfo_y() + self.root.winfo_height() // 2
-        w, h = 400, 210
+        w, h = 460, 210
         win.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
 
         tk.Label(win, text="Que voulez-vous faire ?",
@@ -984,7 +980,7 @@ class ScannerApp:
                 self._schedule_timer.cancel()
             self.root.destroy()
 
-        tk.Button(btn_row, text="🔽  Réduire dans la barre des tâches",
+        tk.Button(btn_row, text="🔽  Réduire",
                   font=("Consolas", 8, "bold"), bg=self.BG3, fg=self.ACCENT,
                   activebackground=self.BG2, activeforeground=self.ACCENT,
                   borderwidth=0, padx=14, pady=6, cursor="hand2", relief=tk.FLAT,
@@ -1027,7 +1023,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.6",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.8",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -3351,7 +3347,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "6.6"
+CURRENT_VERSION = "6.8"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
