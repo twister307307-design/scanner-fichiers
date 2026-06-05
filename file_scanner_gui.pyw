@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v6.0 - Interface Graphique
+Scanner de Fichiers Avancé v6.1 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v6.0 :
+Nouveautés v6.1 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -569,7 +569,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v6.0")
+        self.root.title("Scanner de Fichiers Avancé v6.1")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -630,7 +630,7 @@ class ScannerApp:
                 else:
                     self._update_status = "up_to_date"
                     self.root.after(0, lambda: self.btn_update.config(
-                        text="A jour", fg=self.GREEN))
+                        text=f"A jour (v{CURRENT_VERSION})", fg=self.GREEN))
             except Exception:
                 self._update_status = "offline"
                 self.root.after(0, lambda: self.btn_update.config(
@@ -702,7 +702,7 @@ class ScannerApp:
                     win.after(0, lambda: [
                         lbl_status.config(text="Vous avez la derniere version.", fg=self.GREEN),
                         lbl_ver.config(text=f"v{CURRENT_VERSION}  (a jour)"),
-                        self.btn_update.config(text="A jour", fg=self.GREEN),
+                        self.btn_update.config(text=f"A jour (v{CURRENT_VERSION})", fg=self.GREEN),
                     ])
             except Exception:
                 self._update_status = "offline"
@@ -948,7 +948,7 @@ class ScannerApp:
                 pystray.MenuItem("🔍 Rouvrir le scanner", _show, default=True),
                 pystray.MenuItem("✕ Quitter", _quit),
             )
-            icon = pystray.Icon("scanner", img, "Scanner de Fichiers v6.0", menu)
+            icon = pystray.Icon("scanner", img, "Scanner de Fichiers v6.1", menu)
             self._tray_icon = icon
             threading.Thread(target=icon.run, daemon=True).start()
         else:
@@ -985,7 +985,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.0",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.1",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -3248,7 +3248,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "6.0"
+CURRENT_VERSION = "6.1"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
