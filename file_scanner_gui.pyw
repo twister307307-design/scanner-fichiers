@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v5.8 - Interface Graphique
+Scanner de Fichiers Avancé v5.9 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v5.8 :
+Nouveautés v5.9 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -569,7 +569,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v5.8")
+        self.root.title("Scanner de Fichiers Avancé v5.9")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -601,6 +601,21 @@ class ScannerApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _check_update_async(self):
+        # Lire la version locale depuis le fichier VERSION si disponible
+        import sys as _sys
+        _exe_dir = os.path.dirname(os.path.abspath(
+            _sys.executable if getattr(_sys, "frozen", False) else __file__))
+        _ver_file = os.path.join(_exe_dir, "VERSION")
+        if os.path.exists(_ver_file):
+            try:
+                _local_ver = open(_ver_file).read().strip()
+                def _vt(v): return tuple(int(x) for x in v.strip().split("."))
+                if _vt(_local_ver) > _vt(CURRENT_VERSION):
+                    global CURRENT_VERSION
+                    CURRENT_VERSION = _local_ver
+            except Exception:
+                pass
+
         def _run():
             try:
                 req = urllib.request.Request(GITHUB_VER_URL, headers={"User-Agent": "ScannerFichiers"})
@@ -623,6 +638,12 @@ class ScannerApp:
         threading.Thread(target=_run, daemon=True).start()
 
     def _open_update_window(self):
+        # Bloquer si scan en cours
+        if self.scan_thread is not None and self.scan_thread.is_alive():
+            messagebox.showwarning(
+                "Scan en cours",
+                "Impossible de mettre a jour pendant un scan.\nAttendez la fin du scan.")
+            return
         win = tk.Toplevel(self.root)
         win.title("Connexion & Mises a jour")
         win.resizable(False, False)
@@ -707,6 +728,13 @@ class ScannerApp:
                 with open(tmp, "wb") as f:
                     f.write(new_code)
                 os.replace(tmp, current)
+                # Mettre à jour la version locale dans le fichier VERSION si elle existe
+                ver_path = os.path.join(os.path.dirname(current), "VERSION")
+                try:
+                    with open(ver_path, "w") as fv:
+                        fv.write(self._remote_version)
+                except Exception:
+                    pass
                 win.after(0, lambda: self._restart_after_update(win, lbl_status, prog))
             except Exception as e:
                 win.after(0, lambda: [
@@ -855,7 +883,7 @@ class ScannerApp:
                 pystray.MenuItem("🔍 Rouvrir le scanner", _show, default=True),
                 pystray.MenuItem("✕ Quitter", _quit),
             )
-            icon = pystray.Icon("scanner", img, "Scanner de Fichiers v5.8", menu)
+            icon = pystray.Icon("scanner", img, "Scanner de Fichiers v5.9", menu)
             self._tray_icon = icon
             threading.Thread(target=icon.run, daemon=True).start()
         else:
@@ -892,7 +920,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v5.8",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v5.9",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1060,7 +1088,7 @@ class ScannerApp:
         def _toggle_vt_show():
             self._vt_show = not self._vt_show
             self._vt_entry.config(show="" if self._vt_show else "*")
-            btn_eye.config(text="👁" if self._vt_show else "👁")
+            btn_eye.config(text="🙈" if self._vt_show else "👁")
         btn_eye = tk.Button(vt_entry_row, text="👁",
                             font=("Consolas", 8), bg=self.BG3, fg=self.DIMFG,
                             activebackground=self.BG2, borderwidth=0,
@@ -3155,7 +3183,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "5.8"
+CURRENT_VERSION = "5.9"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
