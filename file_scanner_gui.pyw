@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v7.7 - Interface Graphique
+Scanner de Fichiers Avancé v7.8 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v7.7 :
+Nouveautés v7.8 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -387,6 +387,10 @@ def is_file_encrypted_suspect(filepath, size):
                         ".ja",
                         # Profils Intel Graphics
                         ".igpi",
+                        # Fichiers de jeux / launchers (Riot, Steam, Epic...) - donnees binaires
+                        ".client", ".vpk", ".pak", ".pak2", ".vdf", ".manifest",
+                        ".asset", ".assets", ".bundle", ".unity3d", ".uasset",
+                        ".pck", ".rpf", ".forge", ".big", ".wad",
                     }
                     if ext not in safe_high_entropy:
                         return True, f"entropie élevée ({entropy:.2f}/8.0) — possible chiffrement"
@@ -672,7 +676,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v7.7")
+        self.root.title("Scanner de Fichiers Avancé v7.8")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1137,7 +1141,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.7",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.8",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -3766,7 +3770,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "7.7"
+CURRENT_VERSION = "7.8"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
