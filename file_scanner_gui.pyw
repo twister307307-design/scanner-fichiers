@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v7.1 - Interface Graphique
+Scanner de Fichiers Avancé v7.3 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v7.1 :
+Nouveautés v7.3 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -599,7 +599,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v7.1")
+        self.root.title("Scanner de Fichiers Avancé v7.3")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -608,6 +608,8 @@ class ScannerApp:
         self.scan_thread   = None
         self.stop_event    = threading.Event()
         self.pause_event   = threading.Event()  # set = en pause
+        self._device_response = None   # 'retry' | 'ignore'
+        self._device_event    = threading.Event()
         self._spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self._spinner_idx   = 0
         self._spinner_active = False
@@ -1049,7 +1051,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.1",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.3",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1215,8 +1217,12 @@ class ScannerApp:
         self._vt_show = False
         def _toggle_vt_show():
             self._vt_show = not self._vt_show
-            self._vt_entry.config(show="" if self._vt_show else "*")
-            btn_eye.config(text="🙈" if self._vt_show else "👁")
+            if self._vt_show:
+                self._vt_entry.config(show="")
+                btn_eye.config(text="👁", fg=self.ACCENT)
+            else:
+                self._vt_entry.config(show="*")
+                btn_eye.config(text="👁", fg=self.DIMFG)
         btn_eye = tk.Button(vt_entry_row, text="👁",
                             font=("Consolas", 8), bg=self.BG3, fg=self.DIMFG,
                             activebackground=self.BG2, borderwidth=0,
@@ -2246,8 +2252,12 @@ Lien documentation API :
         show_state = [False]
         def _toggle():
             show_state[0] = not show_state[0]
-            entry.config(show="" if show_state[0] else "*")
-            btn_eye2.config(text="🙈" if show_state[0] else "👁")
+            if show_state[0]:
+                entry.config(show="")
+                btn_eye2.config(text="👁", fg=self.ACCENT)
+            else:
+                entry.config(show="*")
+                btn_eye2.config(text="👁", fg=self.DIMFG)
         btn_eye2 = tk.Button(entry_frame, text="👁",
                              font=("Consolas", 8), bg=self.BG3, fg=self.DIMFG,
                              activebackground=self.BG2, borderwidth=0,
@@ -2488,6 +2498,32 @@ Lien documentation API :
         last_ram_check = time.time()
 
         for root in roots:
+            # Verifier que le peripherique/dossier racine est accessible.
+            # Si non (USB debranche, disque deconnecte...) demander a l'utilisateur.
+            ignore_this_root = False
+            while not os.path.exists(root):
+                if self.stop_event.is_set():
+                    if hash_pool is not None:
+                        hash_pool.shutdown(wait=False)
+                    send("stopped"); return
+                # Demander a l'UI d'afficher la popup peripherique
+                self._device_response = None
+                self._device_event.clear()
+                send("device_error", path=root)
+                # Attendre la reponse de l'utilisateur (max via boucle)
+                while not self._device_event.is_set():
+                    if self.stop_event.is_set():
+                        if hash_pool is not None:
+                            hash_pool.shutdown(wait=False)
+                        send("stopped"); return
+                    time.sleep(0.15)
+                if self._device_response == "ignore":
+                    ignore_this_root = True
+                    break
+                # sinon 'retry' -> reboucle et reverifie os.path.exists
+            if ignore_this_root:
+                continue
+
             for dirpath, dirs, filenames in os.walk(root, followlinks=False):
                 dirs[:] = [d for d in dirs if not d.startswith(".") or root == dirpath]
                 for filename in filenames:
@@ -2666,6 +2702,29 @@ Lien documentation API :
                         stats["errors"] += 1
                         send("error", path=filepath, err="Permission refusée")
                     except OSError as e:
+                        # Detecter une deconnexion de peripherique en cours de scan
+                        if not os.path.exists(root):
+                            ignore_dev = False
+                            while not os.path.exists(root):
+                                if self.stop_event.is_set():
+                                    if hash_pool is not None:
+                                        hash_pool.shutdown(wait=False)
+                                    send("stopped"); return
+                                self._device_response = None
+                                self._device_event.clear()
+                                send("device_error", path=root)
+                                while not self._device_event.is_set():
+                                    if self.stop_event.is_set():
+                                        if hash_pool is not None:
+                                            hash_pool.shutdown(wait=False)
+                                        send("stopped"); return
+                                    time.sleep(0.15)
+                                if self._device_response == "ignore":
+                                    ignore_dev = True
+                                    break
+                            if ignore_dev:
+                                break  # sortir de la boucle filenames -> root suivant
+                            continue
                         errors.append((filepath, str(e)[:60]))
                         stats["errors"] += 1
                         send("error", path=filepath, err=str(e)[:60])
@@ -2700,6 +2759,64 @@ Lien documentation API :
         except queue.Empty:
             pass
         self.root.after(80, self._poll_queue)
+
+    def _show_device_error(self, path):
+        """Popup quand un peripherique/dossier devient inaccessible pendant le scan."""
+        win = tk.Toplevel(self.root)
+        win.title("Périphérique inaccessible")
+        win.resizable(False, False)
+        win.configure(bg=self.BG)
+        win.grab_set()
+        self.root.update_idletasks()
+        px = self.root.winfo_x() + self.root.winfo_width()  // 2
+        py = self.root.winfo_y() + self.root.winfo_height() // 2
+        w, h = 480, 230
+        win.geometry(f"{w}x{h}+{px - w//2}+{py - h//2}")
+
+        tk.Label(win, text="⚠  Périphérique inaccessible",
+                 font=("Consolas", 11, "bold"), fg=self.RED, bg=self.BG).pack(pady=(18, 6))
+        tk.Label(win,
+                 text="Le périphérique ou dossier suivant n'est plus disponible\n"
+                      "(débranché, déconnecté ou inaccessible) :",
+                 font=("Consolas", 8), fg=self.FG, bg=self.BG, justify="center").pack()
+
+        # Chemin qui bug, dans un cadre
+        path_frame = tk.Frame(win, bg=self.BG3, padx=10, pady=6)
+        path_frame.pack(fill=tk.X, padx=20, pady=(8, 4))
+        tk.Label(path_frame, text=path, font=("Consolas", 8, "bold"),
+                 fg=self.YELLOW, bg=self.BG3, wraplength=420, justify="left").pack(anchor="w")
+
+        tk.Label(win, text="Rebranchez-le puis cliquez « Réessayer »,\n"
+                           "ou « Ignorer » pour continuer le scan sans lui.",
+                 font=("Consolas", 8), fg=self.DIMFG, bg=self.BG, justify="center").pack(pady=(6, 0))
+
+        btn_row = tk.Frame(win, bg=self.BG)
+        btn_row.pack(pady=(14, 0))
+
+        def _retry():
+            self._device_response = "retry"
+            win.destroy()
+            self._device_event.set()
+
+        def _ignore():
+            self._device_response = "ignore"
+            win.destroy()
+            self._device_event.set()
+
+        tk.Button(btn_row, text="🔄  Réessayer",
+                  font=("Consolas", 8, "bold"), bg=self.GREEN, fg="#000",
+                  activebackground=self.BG2, activeforeground=self.GREEN,
+                  borderwidth=0, padx=16, pady=6, cursor="hand2", relief=tk.FLAT,
+                  command=_retry).pack(side=tk.LEFT, padx=8)
+
+        tk.Button(btn_row, text="⏭  Ignorer ce périphérique",
+                  font=("Consolas", 8), bg=self.BG3, fg=self.YELLOW,
+                  activebackground=self.BG2, activeforeground=self.YELLOW,
+                  borderwidth=0, padx=16, pady=6, cursor="hand2", relief=tk.FLAT,
+                  command=_ignore).pack(side=tk.LEFT, padx=8)
+
+        # Empecher la fermeture par la croix (force un choix)
+        win.protocol("WM_DELETE_WINDOW", _retry)
 
     def _handle_msg(self, msg):
         t = msg["type"]
@@ -2796,6 +2913,8 @@ Lien documentation API :
                     values=(8, _dx_path, _dx_reason, "—"), tags=("score_8",))
         elif t == "stopped":
             self._scan_finished(stopped=True)
+        elif t == "device_error":
+            self._show_device_error(msg["path"])
         elif t == "done":
             self.results = msg
             self._scan_finished()
@@ -3471,7 +3590,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "7.1"
+CURRENT_VERSION = "7.3"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
