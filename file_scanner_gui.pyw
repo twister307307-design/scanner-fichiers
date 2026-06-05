@@ -601,6 +601,7 @@ class ScannerApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _check_update_async(self):
+        global CURRENT_VERSION
         # Lire la version locale depuis le fichier VERSION si disponible
         import sys as _sys
         _exe_dir = os.path.dirname(os.path.abspath(
@@ -611,7 +612,6 @@ class ScannerApp:
                 _local_ver = open(_ver_file).read().strip()
                 def _vt(v): return tuple(int(x) for x in v.strip().split("."))
                 if _vt(_local_ver) > _vt(CURRENT_VERSION):
-                    global CURRENT_VERSION
                     CURRENT_VERSION = _local_ver
             except Exception:
                 pass
