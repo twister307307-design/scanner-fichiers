@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v7.0 - Interface Graphique
+Scanner de Fichiers Avancé v7.1 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v7.0 :
+Nouveautés v7.1 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -599,7 +599,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v7.0")
+        self.root.title("Scanner de Fichiers Avancé v7.1")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -607,6 +607,10 @@ class ScannerApp:
 
         self.scan_thread   = None
         self.stop_event    = threading.Event()
+        self.pause_event   = threading.Event()  # set = en pause
+        self._spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        self._spinner_idx   = 0
+        self._spinner_active = False
         self.msg_queue     = queue.Queue()
         self.scan_roots    = []
         self.results       = {}
@@ -1045,7 +1049,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.0",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.1",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1296,6 +1300,9 @@ class ScannerApp:
         self.btn_stop = self._btn(left, "■  ARRÊTER", self._stop_scan, self.RED, big=True)
         self.btn_stop.pack(fill=tk.X)
         self.btn_stop.config(state=tk.DISABLED)
+        self.btn_pause = self._btn(left, "⏸  PAUSE", self._toggle_pause, self.YELLOW, big=True)
+        self.btn_pause.pack(fill=tk.X, pady=(6, 0))
+        self.btn_pause.config(state=tk.DISABLED)
         tk.Frame(left, bg=self.BG, height=8).pack()
         self.btn_report = self._btn(left, "📄  Ouvrir rapport .txt", self._open_report, self.DIMFG)
         self.btn_report.pack(fill=tk.X, pady=(0, 3))
@@ -1322,10 +1329,11 @@ class ScannerApp:
         self.card_dupes     = self._card(cards, "Doublons",      "0",     self.PURPLE)
         self.card_errors    = self._card(cards, "Chiffrés",      "0",     self.ORANGE)
         self.card_dblext    = self._card(cards, "Double ext.",   "0",     "#e91e63")
+        self.card_score     = self._card(cards, "Sécurité",      "--",    self.GREEN)
         self.card_speed     = self._card(cards, "Vitesse",       "0 f/s", self.DIMFG)
         for c in (self.card_scanned, self.card_size, self.card_corrupted,
                   self.card_suspects, self.card_dupes,
-                  self.card_errors, self.card_dblext, self.card_speed):
+                  self.card_errors, self.card_dblext, self.card_score, self.card_speed):
             c.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
             Tooltip(c, c._val_label.cget("text"))
 
@@ -2356,6 +2364,14 @@ Lien documentation API :
         self._ext_stats = defaultdict(lambda: {"count": 0, "size": 0})
         self.btn_start.config(state=tk.DISABLED)
         self.btn_stop.config(state=tk.NORMAL)
+        self.pause_event.clear()
+        self.btn_pause.config(state=tk.NORMAL, text="⏸  PAUSE")
+        self._start_spinner()
+        try:
+            self._card_set(self.card_score, "--")
+            self.card_score._val_label.config(fg=self.GREEN)
+        except Exception:
+            pass
         self.btn_report.config(state=tk.DISABLED)
         self.btn_export_csv.config(state=tk.DISABLED)
         self.btn_del_dupes.config(state=tk.DISABLED)
@@ -2389,7 +2405,20 @@ Lien documentation API :
 
     def _stop_scan(self):
         self.stop_event.set()
+        self.pause_event.clear()  # debloquer si en pause pour permettre l'arret
         self._set_status("Arrêt demandé…", self.YELLOW)
+
+    def _toggle_pause(self):
+        if self.pause_event.is_set():
+            # Reprendre
+            self.pause_event.clear()
+            self.btn_pause.config(text="⏸  PAUSE")
+            self._set_status("▶ Scan repris…", self.GREEN)
+        else:
+            # Mettre en pause
+            self.pause_event.set()
+            self.btn_pause.config(text="▶  REPRENDRE")
+            self._set_status("⏸ Scan en pause", self.YELLOW)
 
     def _get_ram_limit_bytes(self):
         if HAS_PSUTIL:
@@ -2462,6 +2491,14 @@ Lien documentation API :
             for dirpath, dirs, filenames in os.walk(root, followlinks=False):
                 dirs[:] = [d for d in dirs if not d.startswith(".") or root == dirpath]
                 for filename in filenames:
+                    if self.stop_event.is_set():
+                        if hash_pool is not None:
+                            hash_pool.shutdown(wait=False)
+                        send("stopped"); return
+
+                    # Pause : attendre tant que pause_event est actif
+                    while self.pause_event.is_set() and not self.stop_event.is_set():
+                        time.sleep(0.2)
                     if self.stop_event.is_set():
                         if hash_pool is not None:
                             hash_pool.shutdown(wait=False)
@@ -2764,8 +2801,11 @@ Lien documentation API :
             self._scan_finished()
 
     def _scan_finished(self, stopped=False):
+        self._stop_spinner()
         self.btn_start.config(state=tk.NORMAL)
         self.btn_stop.config(state=tk.DISABLED)
+        self.btn_pause.config(state=tk.DISABLED, text="⏸  PAUSE")
+        self.pause_event.clear()
         if stopped:
             self._terminal_freeze_bars()
             self._set_status("⚠ Scan interrompu.", self.YELLOW)
@@ -2791,6 +2831,41 @@ Lien documentation API :
         self._log(self.log_all, f"  Chiffrés       : {stats.get('encrypted', 0)}", "orange")
         self._log(self.log_all, f"  Suspects       : {stats.get('suspects', 0)}", "orange")
         self._log(self.log_all, f"  Doublons       : {dupes_count}", "purple")
+
+        # ── Score de risque global /100 ──────────────────────────────
+        scanned_n = max(1, stats["scanned"])
+        corr = stats["corrupted"]
+        susp = stats.get("suspects", 0)
+        enc  = stats.get("encrypted", 0)
+        dbl  = stats.get("dblext", 0)
+        # Ponderation : double extension = tres grave, suspects/corrompus moyens
+        threat_points = dbl * 15 + susp * 4 + corr * 2 + enc * 1
+        # Rapporter au volume scanne (un gros scan tolere plus de bruit)
+        ratio = threat_points / (scanned_n ** 0.5)
+        risk = min(100, int(ratio * 3))
+        safety = 100 - risk  # note de securite (100 = parfait)
+
+        if safety >= 80:
+            risk_color = self.GREEN
+            risk_label = "SAIN"
+        elif safety >= 50:
+            risk_color = self.YELLOW
+            risk_label = "MOYEN"
+        else:
+            risk_color = self.RED
+            risk_label = "A RISQUE"
+
+        self._last_safety_score = safety
+        self._log(self.log_all, f"\n  {'─'*40}", "cyan")
+        self._log(self.log_all, f"  SCORE DE SECURITE : {safety}/100  [{risk_label}]", risk_color)
+        bar = make_progress_bar(safety, 30)
+        self._log(self.log_all, f"  {bar}", risk_color)
+        # Mettre a jour la carte score si elle existe
+        try:
+            self._card_set(self.card_score, f"{safety}/100", flash=True)
+            self.card_score._val_label.config(fg=risk_color)
+        except Exception:
+            pass
 
 
         # Mettre à jour le canvas stats final
@@ -2918,6 +2993,30 @@ Lien documentation API :
 
     def _set_status(self, text, color=None):
         self.status_bar.config(text=text, fg=color or self.DIMFG)
+
+    def _start_spinner(self):
+        """Lance l'animation du spinner dans la status bar pendant le scan."""
+        self._spinner_active = True
+        self._animate_spinner()
+
+    def _stop_spinner(self):
+        self._spinner_active = False
+
+    def _animate_spinner(self):
+        if not self._spinner_active:
+            return
+        # Ne pas animer si en pause
+        if not self.pause_event.is_set():
+            ch = self._spinner_chars[self._spinner_idx % len(self._spinner_chars)]
+            self._spinner_idx += 1
+            cur = self.status_bar.cget("text")
+            # Retirer un ancien spinner en tete s'il y en a un
+            for c in self._spinner_chars:
+                if cur.startswith(c + " "):
+                    cur = cur[2:]
+                    break
+            self.status_bar.config(text=f"{ch} {cur}")
+        self.root.after(100, self._animate_spinner)
 
     def _log(self, widget, text, tag=None):
         widget.config(state=tk.NORMAL)
@@ -3372,7 +3471,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "7.0"
+CURRENT_VERSION = "7.1"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
