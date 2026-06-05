@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v6.9 - Interface Graphique
+Scanner de Fichiers Avancé v7.0 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v6.9 :
+Nouveautés v7.0 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -599,7 +599,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v6.9")
+        self.root.title("Scanner de Fichiers Avancé v7.0")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -643,7 +643,15 @@ class ScannerApp:
 
         def _run():
             try:
-                req = urllib.request.Request(GITHUB_VER_URL, headers={"User-Agent": "ScannerFichiers"})
+                # Cache-buster : ajoute un timestamp pour forcer GitHub a renvoyer
+                # la derniere version (evite le cache qui retardait la detection)
+                buster = int(time.time())
+                url = f"{GITHUB_VER_URL}?t={buster}"
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": "ScannerFichiers",
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                })
                 with urllib.request.urlopen(req, timeout=5) as r:
                     remote = r.read().decode().strip()
                 def vt(v): return tuple(int(x) for x in v.strip().split("."))
@@ -659,8 +667,14 @@ class ScannerApp:
             except Exception:
                 self._update_status = "offline"
                 self.root.after(0, lambda: self.btn_update.config(
-                    text="Hors ligne", fg=self.DIMFG))
+                    text="🔌 Connectez-vous à internet", fg=self.RED))
         threading.Thread(target=_run, daemon=True).start()
+
+        # Re-verifier automatiquement dans 60 secondes
+        try:
+            self.root.after(60000, self._check_update_async)
+        except Exception:
+            pass
 
     def _open_update_window(self):
         # Bloquer si scan en cours
@@ -709,7 +723,13 @@ class ScannerApp:
 
         def _check():
             try:
-                req = urllib.request.Request(GITHUB_VER_URL, headers={"User-Agent": "ScannerFichiers"})
+                buster = int(time.time())
+                url = f"{GITHUB_VER_URL}?t={buster}"
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": "ScannerFichiers",
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                })
                 with urllib.request.urlopen(req, timeout=6) as r:
                     remote = r.read().decode().strip()
                 def vt(v): return tuple(int(x) for x in v.strip().split("."))
@@ -732,9 +752,9 @@ class ScannerApp:
             except Exception:
                 self._update_status = "offline"
                 win.after(0, lambda: [
-                    lbl_status.config(text="Impossible de contacter le serveur.", fg=self.RED),
-                    lbl_ver.config(text="Verifiez votre connexion internet."),
-                    self.btn_update.config(text="Hors ligne", fg=self.DIMFG),
+                    lbl_status.config(text="🔌 Connectez-vous à internet", fg=self.RED),
+                    lbl_ver.config(text="Aucune connexion detectee."),
+                    self.btn_update.config(text="🔌 Connectez-vous à internet", fg=self.RED),
                 ])
         threading.Thread(target=_check, daemon=True).start()
 
@@ -1025,7 +1045,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.9",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.0",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -3352,7 +3372,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "6.9"
+CURRENT_VERSION = "7.0"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
