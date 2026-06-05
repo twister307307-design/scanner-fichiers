@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v7.4 - Interface Graphique
+Scanner de Fichiers Avancé v7.5 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v7.4 :
+Nouveautés v7.5 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -603,7 +603,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v7.4")
+        self.root.title("Scanner de Fichiers Avancé v7.5")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -724,6 +724,12 @@ class ScannerApp:
                  command=lambda: self._do_update(win, lbl_status, prog, btn_upd))
         btn_upd.pack(pady=(16, 4))
 
+        btn_refresh = tk.Button(win, text="🔄  Actualiser",
+                 font=("Consolas", 8, "bold"), bg=self.BG3, fg=self.ACCENT,
+                 activebackground=self.BG2, activeforeground=self.ACCENT,
+                 borderwidth=0, padx=12, pady=5, cursor="hand2", relief=tk.FLAT)
+        btn_refresh.pack(pady=(0, 4))
+
         tk.Button(win, text="Fermer", font=("Consolas", 8), bg=self.BG3, fg=self.DIMFG,
                  activebackground=self.BG2, borderwidth=0, padx=10, pady=4,
                  cursor="hand2", relief=tk.FLAT, command=win.destroy).pack()
@@ -766,7 +772,14 @@ class ScannerApp:
                     lbl_ver.config(text="Aucune connexion detectee."),
                     self.btn_update.config(text="🔌 Connectez-vous à internet", fg=self.RED),
                 ])
-        threading.Thread(target=_check, daemon=True).start()
+        def _do_check():
+            lbl_status.config(text="Verification en cours...", fg=self.DIMFG)
+            lbl_ver.config(text="")
+            btn_upd.config(state=tk.DISABLED)
+            threading.Thread(target=_check, daemon=True).start()
+
+        btn_refresh.config(command=_do_check)
+        _do_check()
 
     def _do_update(self, win, lbl_status, prog, btn_upd):
         btn_upd.config(state=tk.DISABLED, text="Telechargement...")
@@ -1055,7 +1068,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.4",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.5",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -3594,7 +3607,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "7.4"
+CURRENT_VERSION = "7.5"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
