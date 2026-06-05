@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v7.3 - Interface Graphique
+Scanner de Fichiers Avancé v7.4 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v7.3 :
+Nouveautés v7.4 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -299,8 +299,12 @@ def is_file_encrypted_suspect(filepath, size):
                         ".zip", ".gz", ".7z", ".rar", ".tar", ".bz2", ".xz", ".zst",
                         # Médias
                         ".mp3", ".mp4", ".avi", ".mkv", ".mov", ".flac", ".aac", ".ogg",
+                        ".webm", ".m4a", ".m4v", ".opus", ".wma", ".wmv", ".flv", ".3gp",
                         # Images
                         ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico",
+                        # Images modernes (HEIF/AVIF/RAW - compressées par nature)
+                        ".heic", ".heif", ".avif", ".jxl", ".jp2", ".j2k",
+                        ".raw", ".cr2", ".cr3", ".nef", ".arw", ".dng", ".orf", ".rw2",
                         # Icônes macOS (format compressé par nature)
                         ".icns",
                         # Exécutables / libs (compressés/signés par nature)
@@ -599,7 +603,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v7.3")
+        self.root.title("Scanner de Fichiers Avancé v7.4")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1051,7 +1055,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.3",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.4",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -3590,7 +3594,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "7.3"
+CURRENT_VERSION = "7.4"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
