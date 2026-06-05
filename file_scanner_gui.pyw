@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v6.3 - Interface Graphique
+Scanner de Fichiers Avancé v6.4 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v6.3 :
+Nouveautés v6.4 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -35,6 +35,7 @@ import hashlib
 import time
 import stat
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import platform
 import shutil
 import json
@@ -370,6 +371,39 @@ WINDOWS_SYSTEM_EXTENSIONS = {
     ".pak",
 }
 
+def is_double_extension(filepath):
+    """Détecte les fichiers à double extension trompeuse type 'facture.pdf.exe'.
+    Retourne (True, raison) si la dernière extension est exécutable/dangereuse
+    ET qu'il y a une fausse extension de document/média avant.
+    """
+    name = os.path.basename(filepath).lower()
+    parts = name.split(".")
+    if len(parts) < 3:
+        return False, ""  # pas de double extension (nom.ext seulement)
+
+    # Dernière extension = la vraie
+    real_ext = "." + parts[-1]
+    # Avant-dernière = l'extension trompeuse
+    fake_ext = "." + parts[-2]
+
+    # Extensions exécutables / dangereuses en position finale
+    dangerous = {
+        ".exe", ".scr", ".bat", ".cmd", ".com", ".pif", ".vbs", ".vbe",
+        ".js", ".jse", ".ws", ".wsf", ".wsh", ".ps1", ".msi", ".jar",
+        ".hta", ".cpl", ".msc", ".reg", ".lnk", ".inf", ".dll", ".sys",
+    }
+    # Fausses extensions trompeuses (documents/médias inoffensifs en apparence)
+    decoy = {
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".txt", ".jpg", ".jpeg", ".png", ".gif", ".mp3", ".mp4", ".avi",
+        ".zip", ".rar", ".html", ".htm", ".csv", ".rtf", ".odt",
+    }
+
+    if real_ext in dangerous and fake_ext in decoy:
+        return True, f"Double extension trompeuse : {parts[-2]}{real_ext}"
+    return False, ""
+
+
 def is_windows_system_file(filepath):
     """Retourne True si le fichier appartient au système Windows.
     Ces fichiers sont analysés normalement mais ne sont PAS marqués comme
@@ -569,7 +603,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v6.3")
+        self.root.title("Scanner de Fichiers Avancé v6.4")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1011,7 +1045,7 @@ class ScannerApp:
                 pystray.MenuItem("🔍 Rouvrir le scanner", _show, default=True),
                 pystray.MenuItem("✕ Quitter", _quit),
             )
-            icon = pystray.Icon("scanner", img, "Scanner de Fichiers v6.3", menu)
+            icon = pystray.Icon("scanner", img, "Scanner de Fichiers v6.4", menu)
             self._tray_icon = icon
             threading.Thread(target=icon.run, daemon=True).start()
         else:
@@ -1048,7 +1082,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.3",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.4",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1182,6 +1216,7 @@ class ScannerApp:
         vt_cb_row.pack(fill=tk.X)
         cb_vt = tk.Checkbutton(vt_cb_row, text="🦠 Vérifier VirusTotal (API)",
                                variable=self.var_virustotal,
+                               command=self._toggle_vt_key,
                                bg=self.BG, fg="#ff6d00", selectcolor=self.BG3,
                                activebackground=self.BG, activeforeground="#ff6d00",
                                font=("Consolas", 8))
@@ -1224,8 +1259,24 @@ class ScannerApp:
                             command=_toggle_vt_show)
         btn_eye.pack(side=tk.LEFT)
         Tooltip(btn_eye, "Afficher / masquer la clé API")
-        # Toujours visible
-        self._vt_key_row.pack(fill=tk.X, pady=(4, 4))
+        # Affiché seulement si VirusTotal est coché
+        if self.var_virustotal.get():
+            self._vt_key_row.pack(fill=tk.X, pady=(4, 4))
+
+        # ── Nombre de cœurs CPU (multi-thread) ──
+        tk.Frame(self._opt_frame, bg=self.DIMFG, height=1).pack(fill=tk.X, pady=(6, 4))
+        cores_row = tk.Frame(self._opt_frame, bg=self.BG)
+        cores_row.pack(fill=tk.X)
+        tk.Label(cores_row, text="⚡ Cœurs CPU :", font=("Consolas", 8),
+                 fg=self.GREEN, bg=self.BG).pack(side=tk.LEFT)
+        max_cores = min(4, (os.cpu_count() or 2))
+        self.var_cores = tk.IntVar(value=self.cfg.get("scan_cores", min(2, max_cores)))
+        for n in range(1, max_cores + 1):
+            tk.Radiobutton(cores_row, text=str(n), variable=self.var_cores, value=n,
+                           bg=self.BG, fg=self.DIMFG, selectcolor=self.BG3,
+                           activebackground=self.BG, activeforeground=self.GREEN,
+                           font=("Consolas", 8)).pack(side=tk.LEFT, padx=2)
+        Tooltip(cores_row, "Plus de cœurs = scan plus rapide sur gros volumes (max 4)")
 
         # ── Scan planifié ──
         tk.Frame(self._opt_frame, bg=self.DIMFG, height=1).pack(fill=tk.X, pady=(4, 4))
@@ -1312,10 +1363,11 @@ class ScannerApp:
         self.card_suspects  = self._card(cards, "Suspects",      "0",     "#ff6d00")
         self.card_dupes     = self._card(cards, "Doublons",      "0",     self.PURPLE)
         self.card_errors    = self._card(cards, "Chiffrés",      "0",     self.ORANGE)
+        self.card_dblext    = self._card(cards, "Double ext.",   "0",     "#e91e63")
         self.card_speed     = self._card(cards, "Vitesse",       "0 f/s", self.DIMFG)
         for c in (self.card_scanned, self.card_size, self.card_corrupted,
                   self.card_suspects, self.card_dupes,
-                  self.card_errors, self.card_speed):
+                  self.card_errors, self.card_dblext, self.card_speed):
             c.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
             Tooltip(c, c._val_label.cget("text"))
 
@@ -1331,6 +1383,7 @@ class ScannerApp:
         self.log_dupes, self.btn_del_dupes = self._log_tab_with_action(
             notebook, "🟣 Doublons", "🗑  Supprimer les doublons", self._manual_delete_dupes, self.PURPLE)
         self.log_errors    = self._log_tab(notebook, "🟠 Chiffrés")
+        self.log_dblext    = self._log_tab(notebook, "🔺 Double extension")
         self.log_access_errors = self._log_tab(notebook, "🟡 Erreurs accès")
         self.tab_stats     = self._build_stats_tab(notebook)
 
@@ -1514,6 +1567,15 @@ class ScannerApp:
                 self.btn_schedule.config(text="Activer", fg=self.GREEN)
             self._sch_dur_row.pack_forget()
             self.lbl_schedule_status.pack_forget()
+
+    def _toggle_vt_key(self):
+        """Affiche ou cache le bloc clé API selon l'état de la case VirusTotal."""
+        if self.var_virustotal.get():
+            self._vt_key_row.pack(fill=tk.X, pady=(4, 4))
+            # Mettre le focus sur le champ pour saisie immédiate
+            self._vt_entry.focus_set()
+        else:
+            self._vt_key_row.pack_forget()
 
     def _open_vt_help(self):
         """Crée et ouvre un fichier .txt d'aide pour VirusTotal."""
@@ -2362,6 +2424,7 @@ Lien documentation API :
             "virustotal_api_key": self.vt_key_var.get(),
             "schedule_hours":     self.var_schedule.get(),
             "var_strict_dupes":   self.var_strict_dupes.get(),
+            "scan_cores":         self.var_cores.get(),
         })
         save_config(self.cfg)
         self.scan_thread = threading.Thread(target=self._scan_worker, daemon=True)
@@ -2388,9 +2451,24 @@ Lien documentation API :
         use_virustotal   = self.var_virustotal.get()
         vt_api_key       = self.vt_key_var.get().strip()
         ram_limit        = self._get_ram_limit_bytes()
+        n_cores          = max(1, self.var_cores.get())
 
         def send(type_, **kw):
             q.put({"type": type_, **kw})
+
+        # Pool de threads pour accélérer le hashing (multi-cœurs)
+        hash_pool = ThreadPoolExecutor(max_workers=n_cores) if n_cores > 1 else None
+
+        def compute_dupe_hash(fp, sz):
+            """Calcule le hash partiel (début+fin) d'un fichier pour les doublons."""
+            h = hashlib.md5()
+            with open(fp, "rb") as f:
+                h.update(f.read(65536))
+                if sz > 131072:
+                    f.seek(-65536, 2)
+                    h.update(f.read(65536))
+            h.update(str(sz).encode())
+            return h.hexdigest()
 
         # Comptage
         send("status", text="Comptage des fichiers…")
@@ -2403,6 +2481,8 @@ Lien documentation API :
                 if _frame % 40 == 0:
                     send("counting", count=total)
                 if self.stop_event.is_set():
+                    if hash_pool is not None:
+                        hash_pool.shutdown(wait=False)
                     send("stopped"); return
         send("count_done", total=total)
 
@@ -2412,7 +2492,8 @@ Lien documentation API :
         suspects   = []
         errors     = []
         stats = {"total_size": 0, "corrupted": 0,
-                 "suspects": 0, "duplicates": 0, "encrypted": 0, "errors": 0, "scanned": 0}
+                 "suspects": 0, "duplicates": 0, "encrypted": 0, "errors": 0, "scanned": 0,
+                 "dblext": 0}
 
         start_time     = time.time()
         last_refresh   = time.time()
@@ -2425,6 +2506,8 @@ Lien documentation API :
                 dirs[:] = [d for d in dirs if not d.startswith(".") or root == dirpath]
                 for filename in filenames:
                     if self.stop_event.is_set():
+                        if hash_pool is not None:
+                            hash_pool.shutdown(wait=False)
                         send("stopped"); return
 
                     filepath = os.path.join(dirpath, filename)
@@ -2442,6 +2525,12 @@ Lien documentation API :
 
                         # Détecter si fichier système Windows
                         is_sys = is_windows_system_file(filepath)
+
+                        # ── Détection double extension trompeuse ─────────────────
+                        dbl_flag, dbl_reason = is_double_extension(filepath)
+                        if dbl_flag:
+                            stats["dblext"] += 1
+                            send("dblext", path=filepath, reason=dbl_reason)
 
                         # ── ÉTAPE 1 : score de suspicion de base ─────────────────
                         susp_flag, susp_reason = is_file_suspicious(filepath, size)
@@ -2527,14 +2616,12 @@ Lien documentation API :
                         if find_duplicates and not is_sys and size > 0:
                             fname = os.path.basename(filepath).lower()
                             try:
-                                h = hashlib.md5()
-                                with open(filepath, "rb") as f:
-                                    h.update(f.read(65536))
-                                    if size > 131072:
-                                        f.seek(-65536, 2)
-                                        h.update(f.read(65536))
-                                h.update(str(size).encode())
-                                content_key = (fname, size, h.hexdigest())
+                                if hash_pool is not None:
+                                    fut = hash_pool.submit(compute_dupe_hash, filepath, size)
+                                    hexd = fut.result()
+                                else:
+                                    hexd = compute_dupe_hash(filepath, size)
+                                content_key = (fname, size, hexd)
 
                                 if strict_dupes:
                                     # Mode strict : on regroupe par contenu,
@@ -2602,6 +2689,8 @@ Lien documentation API :
                         last_refresh = now
 
         elapsed = time.time() - start_time
+        if hash_pool is not None:
+            hash_pool.shutdown(wait=False)
         send("done", corrupted=corrupted, suspects=suspects,
              errors=errors, stats=stats, elapsed=elapsed)
 
@@ -2647,6 +2736,7 @@ Lien documentation API :
             self._card_set(self.card_suspects,   str(stats.get("suspects", 0)), flash=(stats.get("suspects", 0) > 0))
             self._card_set(self.card_dupes,      str(stats["duplicates"]), flash=(stats["duplicates"] > 0))
             self._card_set(self.card_errors,     str(stats.get("encrypted", 0)), flash=(stats.get("encrypted", 0) > 0))
+            self._card_set(self.card_dblext,     str(stats.get("dblext", 0)), flash=(stats.get("dblext", 0) > 0))
             self._card_set(self.card_speed,      f"{spd:.0f} f/s")
             if len(self._speed_history) % 5 == 0:
                 self._update_speed_canvas()
@@ -2696,6 +2786,17 @@ Lien documentation API :
             self._card_set(self.card_dupes, str(self.results_dupes_count), flash=True)
         elif t == "error":
             self._log(self.log_access_errors, f"\n[{msg['err']}]\n  {msg['path']}", "yellow")
+        elif t == "dblext":
+            self._log(self.log_dblext,
+                      f"\n🔺 [{msg['reason']}]\n  {msg['path']}", "red")
+            # Ajouter aussi dans Suspects avec un score élevé (8/10)
+            _dx_path   = msg["path"]
+            _dx_reason = f"🔺 {msg['reason']}"
+            self._suspects_data.append((_dx_path, _dx_reason, 8, 0))
+            term = self.var_search.get().lower()
+            if not term or term in _dx_path.lower() or term in _dx_reason.lower():
+                self.tree_suspects.insert("", tk.END,
+                    values=(8, _dx_path, _dx_reason, "—"), tags=("score_8",))
         elif t == "stopped":
             self._scan_finished(stopped=True)
         elif t == "done":
@@ -2845,7 +2946,7 @@ Lien documentation API :
         w.config(state=tk.DISABLED)
 
     def _clear_logs(self):
-        for w in (self.log_all, self.log_corrupted, self.log_dupes, self.log_errors, self.log_access_errors):
+        for w in (self.log_all, self.log_corrupted, self.log_dupes, self.log_errors, self.log_dblext, self.log_access_errors):
             w.config(state=tk.NORMAL)
             w.delete("1.0", tk.END)
             w.config(state=tk.DISABLED)
@@ -3311,7 +3412,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "6.3"
+CURRENT_VERSION = "6.4"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
