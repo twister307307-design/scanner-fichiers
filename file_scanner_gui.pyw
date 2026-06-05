@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v6.1 - Interface Graphique
+Scanner de Fichiers Avancé v6.2 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v6.1 :
+Nouveautés v6.2 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -569,7 +569,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v6.1")
+        self.root.title("Scanner de Fichiers Avancé v6.2")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -820,22 +820,70 @@ class ScannerApp:
         win.after(1500, _do_restart)
 
     def _uninstall(self):
-        import subprocess, sys
+        import subprocess, sys, tempfile
         confirm = messagebox.askyesno(
             "Desinstaller le Scanner",
             "Voulez-vous vraiment desinstaller le Scanner de Fichiers ?\n\n"
-            "Vos fichiers personnels ne seront pas touches.",
+            "Le programme, le dossier d'installation et le raccourci Bureau\n"
+            "seront supprimes. Vos fichiers personnels ne seront pas touches.",
             icon="warning")
         if not confirm:
             return
-        exe_dir = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else __file__)
-        uninstall_bat = os.path.join(exe_dir, "uninstall.bat")
-        if os.path.exists(uninstall_bat):
-            subprocess.Popen(["cmd.exe", "/c", uninstall_bat], creationflags=0x00000008)
-            self.root.destroy()
+
+        is_frozen = getattr(sys, "frozen", False)
+        current   = os.path.abspath(sys.executable if is_frozen else __file__)
+        exe_dir   = os.path.dirname(current)
+        exe_name  = os.path.basename(current)
+
+        # Generer le script de desinstallation a la volee dans le dossier TEMP
+        uninstaller = os.path.join(tempfile.gettempdir(), "scanner_uninstall.bat")
+
+        lines = [
+            "@echo off",
+            "timeout /t 2 /nobreak >nul",
+            ":: Tuer le processus s'il tourne encore",
+            "taskkill /f /im \"" + exe_name + "\" >nul 2>&1",
+            "timeout /t 1 /nobreak >nul",
+            ":: Supprimer le raccourci Bureau",
+            "powershell -NoProfile -Command \"$f=Join-Path ([Environment]::GetFolderPath('Desktop')) 'Scanner de Fichiers.lnk'; if(Test-Path $f){Remove-Item -Force $f}\"",
+            "powershell -NoProfile -Command \"$f=Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Scanner de Fichiers.lnk'; if(Test-Path $f){Remove-Item -Force $f}\"",
+            ":: Supprimer les fichiers lock/signal/version",
+            "del /f /q \"%USERPROFILE%\\.scanner_running.lock\" >nul 2>&1",
+            "del /f /q \"%USERPROFILE%\\.scanner_show.signal\" >nul 2>&1",
+        ]
+
+        # Supprimer le dossier d'installation (uniquement s'il est dans LOCALAPPDATA, par securite)
+        local_appdata = os.environ.get("LOCALAPPDATA", "")
+        if local_appdata and exe_dir.lower().startswith(local_appdata.lower()):
+            lines.append(":: Supprimer le dossier d'installation complet")
+            lines.append("rd /s /q \"" + exe_dir + "\"")
         else:
+            # Sinon supprimer juste les fichiers de l'app (pas tout le dossier, securite)
+            lines.append(":: Supprimer les fichiers de l'application")
+            lines.append("del /f /q \"" + current + "\" >nul 2>&1")
+            lines.append("del /f /q \"" + os.path.join(exe_dir, "file_scanner_gui.pyw") + "\" >nul 2>&1")
+            lines.append("del /f /q \"" + os.path.join(exe_dir, "VERSION") + "\" >nul 2>&1")
+            lines.append("del /f /q \"" + os.path.join(exe_dir, "app.ico") + "\" >nul 2>&1")
+            lines.append("del /f /q \"" + os.path.join(exe_dir, "scanner.ico") + "\" >nul 2>&1")
+            lines.append("del /f /q \"" + os.path.join(exe_dir, "uninstall.bat") + "\" >nul 2>&1")
+
+        lines.append("echo.")
+        lines.append("echo  Desinstallation terminee.")
+        lines.append("timeout /t 2 /nobreak >nul")
+        lines.append("del /f /q \"" + uninstaller + "\"")
+
+        try:
+            with open(uninstaller, "w") as f:
+                f.write("\r\n".join(lines))
+        except Exception as e:
             messagebox.showerror("Desinstallation",
-                f"uninstall.bat introuvable.\nSupprimez manuellement : {exe_dir}")
+                f"Impossible de creer le script de desinstallation : {e}")
+            return
+
+        # Lancer le script en arriere-plan et fermer l'appli
+        subprocess.Popen(["cmd.exe", "/c", uninstaller],
+                         creationflags=0x00000008)  # DETACHED_PROCESS
+        self.root.destroy()
 
     def _show_window(self):
         """Restaure la fenêtre depuis l'arrière-plan."""
@@ -948,7 +996,7 @@ class ScannerApp:
                 pystray.MenuItem("🔍 Rouvrir le scanner", _show, default=True),
                 pystray.MenuItem("✕ Quitter", _quit),
             )
-            icon = pystray.Icon("scanner", img, "Scanner de Fichiers v6.1", menu)
+            icon = pystray.Icon("scanner", img, "Scanner de Fichiers v6.2", menu)
             self._tray_icon = icon
             threading.Thread(target=icon.run, daemon=True).start()
         else:
@@ -985,7 +1033,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.1",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.2",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -3248,7 +3296,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "6.1"
+CURRENT_VERSION = "6.2"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
