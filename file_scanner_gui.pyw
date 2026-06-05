@@ -806,11 +806,15 @@ class ScannerApp:
         def _do_restart():
             win.destroy()
             if is_frozen and updater:
-                # Lancer le bat updater en arriere-plan puis fermer
+                # .exe : lancer updater.bat qui recompile et relance
                 subprocess.Popen(["cmd.exe", "/c", updater],
                                   creationflags=subprocess.CREATE_NO_WINDOW)
             else:
-                subprocess.Popen([sys.executable, current])
+                # .pyw : relancer via pythonw.exe (sans fenetre noire) ou python.exe
+                pythonw = sys.executable.replace("python.exe", "pythonw.exe")
+                if not os.path.exists(pythonw):
+                    pythonw = sys.executable
+                subprocess.Popen([pythonw, current])
             self.root.destroy()
 
         win.after(1500, _do_restart)
