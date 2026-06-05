@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v6.4 - Interface Graphique
+Scanner de Fichiers Avancé v6.5 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v6.4 :
+Nouveautés v6.5 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -59,12 +59,6 @@ try:
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
-
-try:
-    import pystray
-    HAS_PYSTRAY = True
-except ImportError:
-    HAS_PYSTRAY = False
 
 # ─── Config persistante ───────────────────────────────────────────────────────
 
@@ -603,7 +597,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v6.4")
+        self.root.title("Scanner de Fichiers Avancé v6.5")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -623,7 +617,6 @@ class ScannerApp:
         self._ext_stats    = defaultdict(lambda: {"count": 0, "size": 0})
         # v3.0
         self._schedule_timer = None
-        self._tray_icon      = None
         self._hidden         = False
         self._update_status  = "checking"
         self._remote_version = ""
@@ -933,12 +926,6 @@ class ScannerApp:
         self.root.state("normal")
         self.root.lift()
         self.root.focus_force()
-        if self._tray_icon is not None:
-            try:
-                self._tray_icon.stop()
-            except Exception:
-                pass
-            self._tray_icon = None
 
     def _on_close(self):
         """Demande à l'utilisateur : réduire en arrière-plan ou fermer complètement."""
@@ -962,9 +949,9 @@ class ScannerApp:
                  ).pack(pady=(18, 4))
 
         if scanning:
-            info = "Un scan est en cours."
+            info = "Un scan est en cours.\nReduisez dans la barre des taches pour le laisser tourner."
         else:
-            info = "Le scanner peut continuer en arrière-plan\n(scan planifié actif)."
+            info = "Reduire = l'appli reste dans la barre des taches.\nFermer = quitte completement."
         tk.Label(win, text=info, font=("Consolas", 8),
                  fg=self.DIMFG, bg=self.BG, justify="center").pack(pady=(0, 14))
 
@@ -976,9 +963,9 @@ class ScannerApp:
             self.cfg["geometry"] = self.root.geometry()
             self.cfg["last_scan_roots"] = list(self.roots_list.get(0, tk.END))
             save_config(self.cfg)
-            self.root.withdraw()
+            # Minimiser dans la barre des taches (reste visible et cliquable)
+            self.root.iconify()
             self._hidden = True
-            self._start_tray_icon()
 
         def _quit_full():
             # Bloquer si un scan est en cours
@@ -995,14 +982,9 @@ class ScannerApp:
             save_config(self.cfg)
             if self._schedule_timer is not None:
                 self._schedule_timer.cancel()
-            if self._tray_icon is not None:
-                try:
-                    self._tray_icon.stop()
-                except Exception:
-                    pass
             self.root.destroy()
 
-        tk.Button(btn_row, text="🔽  Réduire en arrière-plan",
+        tk.Button(btn_row, text="🔽  Réduire dans la barre des tâches",
                   font=("Consolas", 8, "bold"), bg=self.BG3, fg=self.ACCENT,
                   activebackground=self.BG2, activeforeground=self.ACCENT,
                   borderwidth=0, padx=14, pady=6, cursor="hand2", relief=tk.FLAT,
@@ -1015,43 +997,6 @@ class ScannerApp:
                   command=_quit_full).pack(side=tk.LEFT, padx=6)
 
         win.bind("<Escape>", lambda e: win.destroy())
-
-    def _start_tray_icon(self):
-        """Lance une icône dans la zone de notification (systray) si pystray est dispo."""
-        if self._tray_icon is not None:
-            return  # déjà actif
-
-        def _show(icon, item):
-            icon.stop()
-            self._tray_icon = None
-            self.root.after(0, self.root.deiconify)
-
-        def _quit(icon, item):
-            icon.stop()
-            self._tray_icon = None
-            if self._schedule_timer is not None:
-                self._schedule_timer.cancel()
-            self.root.after(0, self.root.destroy)
-
-        if HAS_PYSTRAY and HAS_PIL:
-            # Icône 64x64 simple bleue avec loupe
-            img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-            from PIL import ImageDraw
-            d = ImageDraw.Draw(img)
-            d.ellipse([8, 8, 44, 44], fill="#00d4ff", outline="#ffffff", width=3)
-            d.ellipse([14, 14, 38, 38], fill="#0f1117")
-            d.line([38, 38, 56, 56], fill="#ffffff", width=5)
-            menu = pystray.Menu(
-                pystray.MenuItem("🔍 Rouvrir le scanner", _show, default=True),
-                pystray.MenuItem("✕ Quitter", _quit),
-            )
-            icon = pystray.Icon("scanner", img, "Scanner de Fichiers v6.4", menu)
-            self._tray_icon = icon
-            threading.Thread(target=icon.run, daemon=True).start()
-        else:
-            # Pas de pystray : la fenêtre est juste masquée (withdraw).
-            # Le process reste visible dans la barre des tâches Windows — pas besoin de widget supplémentaire.
-            pass
 
     # ── Thème ──────────────────────────────────────────────────────────────────
 
@@ -1082,7 +1027,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.4",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.5",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -3412,7 +3357,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "6.4"
+CURRENT_VERSION = "6.5"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
