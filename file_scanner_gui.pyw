@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v6.5 - Interface Graphique
+Scanner de Fichiers Avancé v6.6 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v6.5 :
+Nouveautés v6.6 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -597,7 +597,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v6.5")
+        self.root.title("Scanner de Fichiers Avancé v6.6")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1027,7 +1027,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.5",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v6.6",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1119,7 +1119,6 @@ class ScannerApp:
                                 activebackground=self.BG, activeforeground=color,
                                 font=("Consolas", 8))
             cb.pack(anchor="w")
-            Tooltip(cb, tip)
 
         tk.Label(self._opt_frame, text="  — Actions —",
                  font=("Consolas", 7, "italic"), fg=self.DIMFG, bg=self.BG).pack(anchor="w", pady=(4, 0))
@@ -1136,7 +1135,6 @@ class ScannerApp:
                                 activebackground=self.BG, activeforeground=color,
                                 font=("Consolas", 8))
             cb.pack(anchor="w")
-            Tooltip(cb, tip)
 
         tk.Label(self._opt_frame, text="  — Rapport & son —",
                  font=("Consolas", 7, "italic"), fg=self.DIMFG, bg=self.BG).pack(anchor="w", pady=(4, 0))
@@ -1153,7 +1151,6 @@ class ScannerApp:
                                 activebackground=self.BG, activeforeground=color,
                                 font=("Consolas", 8))
             cb.pack(anchor="w")
-            Tooltip(cb, tip)
 
         # ── VirusTotal ──
         tk.Frame(self._opt_frame, bg=self.DIMFG, height=1).pack(fill=tk.X, pady=(6, 4))
@@ -1166,9 +1163,11 @@ class ScannerApp:
                                activebackground=self.BG, activeforeground="#ff6d00",
                                font=("Consolas", 8))
         cb_vt.pack(side=tk.LEFT)
-        Tooltip(cb_vt, "Envoie le hash MD5 des suspects à VirusTotal")
 
-        # Bloc clé API VT — toujours affiché sous la case VirusTotal
+        # Garder une reference a la ligne de la case pour placer la cle juste apres
+        self._vt_cb_row = vt_cb_row
+
+        # Bloc clé API VT — affiché juste sous la case VirusTotal
         self._vt_key_row = tk.Frame(self._opt_frame, bg=self.BG2,
                                     padx=8, pady=6, relief=tk.FLAT, bd=1)
         # Ligne titre + bouton aide
@@ -1182,7 +1181,6 @@ class ScannerApp:
                                 cursor="hand2", relief=tk.FLAT, padx=5, pady=1,
                                 command=self._open_vt_help)
         btn_vt_help.pack(side=tk.RIGHT, padx=2)
-        Tooltip(btn_vt_help, "Comment obtenir une clé API VirusTotal gratuite")
         # Champ clé + œil
         vt_entry_row = tk.Frame(self._vt_key_row, bg=self.BG2)
         vt_entry_row.pack(fill=tk.X, pady=(4, 0))
@@ -1203,10 +1201,9 @@ class ScannerApp:
                             cursor="hand2", relief=tk.FLAT, padx=4,
                             command=_toggle_vt_show)
         btn_eye.pack(side=tk.LEFT)
-        Tooltip(btn_eye, "Afficher / masquer la clé API")
-        # Affiché seulement si VirusTotal est coché
+        # Affiché seulement si VirusTotal est coché, juste sous la case
         if self.var_virustotal.get():
-            self._vt_key_row.pack(fill=tk.X, pady=(4, 4))
+            self._vt_key_row.pack(fill=tk.X, pady=(4, 4), after=self._vt_cb_row)
 
         # ── Nombre de cœurs CPU (multi-thread) ──
         tk.Frame(self._opt_frame, bg=self.DIMFG, height=1).pack(fill=tk.X, pady=(6, 4))
@@ -1221,7 +1218,6 @@ class ScannerApp:
                            bg=self.BG, fg=self.DIMFG, selectcolor=self.BG3,
                            activebackground=self.BG, activeforeground=self.GREEN,
                            font=("Consolas", 8)).pack(side=tk.LEFT, padx=2)
-        Tooltip(cores_row, "Plus de cœurs = scan plus rapide sur gros volumes (max 4)")
 
         # ── Scan planifié ──
         tk.Frame(self._opt_frame, bg=self.DIMFG, height=1).pack(fill=tk.X, pady=(4, 4))
@@ -1234,7 +1230,6 @@ class ScannerApp:
                                 font=("Consolas", 8),
                                 command=self._toggle_schedule_row)
         cb_sch.pack(side=tk.LEFT)
-        Tooltip(cb_sch, "Lance le scan automatiquement toutes les X heures")
 
         # Ligne durée (masquée si case décochée)
         self._sch_dur_row = tk.Frame(self._opt_frame, bg=self.BG)
@@ -1514,10 +1509,9 @@ class ScannerApp:
             self.lbl_schedule_status.pack_forget()
 
     def _toggle_vt_key(self):
-        """Affiche ou cache le bloc clé API selon l'état de la case VirusTotal."""
+        """Affiche ou cache le bloc clé API juste sous la case VirusTotal."""
         if self.var_virustotal.get():
-            self._vt_key_row.pack(fill=tk.X, pady=(4, 4))
-            # Mettre le focus sur le champ pour saisie immédiate
+            self._vt_key_row.pack(fill=tk.X, pady=(4, 4), after=self._vt_cb_row)
             self._vt_entry.focus_set()
         else:
             self._vt_key_row.pack_forget()
@@ -3357,7 +3351,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "6.5"
+CURRENT_VERSION = "6.6"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
