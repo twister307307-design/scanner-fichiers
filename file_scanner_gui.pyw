@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v7.8 - Interface Graphique
+Scanner de Fichiers Avancé v7.9 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v7.8 :
+Nouveautés v7.9 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -150,6 +150,41 @@ THEMES = {
         "YELLOW": "#f57f17", "PURPLE": "#6a1b9a", "ORANGE": "#e65100",
         "FG": "#212121", "DIMFG": "#546e7a", "TAB_SEL": "#bbdefb",
         "HEADER": "#e3f2fd",
+    },
+    "matrix": {
+        "BG": "#0a0e14", "BG2": "#0e1a0e", "BG3": "#102810",
+        "ACCENT": "#39ff14", "GREEN": "#00cc44", "RED": "#ff3333",
+        "YELLOW": "#aaff00", "PURPLE": "#7fff7f", "ORANGE": "#88ff33",
+        "FG": "#39ff14", "DIMFG": "#1a7a0a", "TAB_SEL": "#1a3d1a",
+        "HEADER": "#050a05",
+    },
+    "cyberpunk": {
+        "BG": "#0d0221", "BG2": "#1a0a3a", "BG3": "#2a1a4a",
+        "ACCENT": "#ff2e97", "GREEN": "#05d9e8", "RED": "#ff3355",
+        "YELLOW": "#f9f002", "PURPLE": "#8a4fff", "ORANGE": "#ff6c11",
+        "FG": "#f0e6ff", "DIMFG": "#8a4fff", "TAB_SEL": "#3a2a5a",
+        "HEADER": "#070115",
+    },
+    "amber": {
+        "BG": "#1a1207", "BG2": "#241a0a", "BG3": "#3d2c14",
+        "ACCENT": "#ff8c1a", "GREEN": "#ffb700", "RED": "#ff4444",
+        "YELLOW": "#ffd700", "PURPLE": "#ffaa55", "ORANGE": "#ff7700",
+        "FG": "#ffcc80", "DIMFG": "#b35900", "TAB_SEL": "#4d3818",
+        "HEADER": "#0f0a04",
+    },
+    "cyberteal": {
+        "BG": "#001a1a", "BG2": "#002626", "BG3": "#003333",
+        "ACCENT": "#00ffd5", "GREEN": "#00b8a3", "RED": "#ff5e7e",
+        "YELLOW": "#5cffe4", "PURPLE": "#33ffcc", "ORANGE": "#00e0c0",
+        "FG": "#ccfff5", "DIMFG": "#00997f", "TAB_SEL": "#004d4d",
+        "HEADER": "#000f0f",
+    },
+    "synthwave": {
+        "BG": "#14091f", "BG2": "#1f0f2e", "BG3": "#2d1b3d",
+        "ACCENT": "#bd5fff", "GREEN": "#36f9f6", "RED": "#ff6ac1",
+        "YELLOW": "#fede5d", "PURPLE": "#ff6ac1", "ORANGE": "#ff8b39",
+        "FG": "#f0d9ff", "DIMFG": "#7a3fb0", "TAB_SEL": "#3d2850",
+        "HEADER": "#0d0518",
     },
 }
 
@@ -676,7 +711,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v7.8")
+        self.root.title("Scanner de Fichiers Avancé v7.9")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1141,7 +1176,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.8",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.9",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1155,9 +1190,9 @@ class ScannerApp:
             btn = tk.Button(theme_frame, text=tname,
                             font=("Consolas", 7), bg=self.BG3, fg=self.FG,
                             activebackground=self.BG2, activeforeground=self.ACCENT,
-                            borderwidth=0, padx=8, pady=2, cursor="hand2", relief=tk.FLAT,
+                            borderwidth=0, padx=5, pady=2, cursor="hand2", relief=tk.FLAT,
                             command=lambda n=tname: self._apply_theme(n))
-            btn.pack(side=tk.LEFT, padx=2)
+            btn.pack(side=tk.LEFT, padx=1)
 
         # Bouton Désinstaller (haut droite)
         tk.Button(header, text="Desinstaller",
@@ -3770,7 +3805,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "7.8"
+CURRENT_VERSION = "7.9"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
