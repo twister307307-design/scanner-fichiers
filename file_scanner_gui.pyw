@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v8.2 - Interface Graphique
+Scanner de Fichiers Avancé v8.3 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v8.2 :
+Nouveautés v8.3 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -711,7 +711,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v8.2")
+        self.root.title("Scanner de Fichiers Avancé v8.3")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -929,45 +929,58 @@ class ScannerApp:
                     bat_lines = [
                         "@echo off",
                         "title Mise a jour ScannerFichiers",
+                        "echo ========================================",
+                        "echo   MISE A JOUR DE SCANNERFICHIERS",
+                        "echo ========================================",
                         "echo.",
-                        "echo   Mise a jour en cours, merci de patienter...",
-                        "echo   (recompilation de l'application, 1 a 2 minutes)",
-                        "echo.",
-                        ":: Attendre que l'ancien exe se ferme completement",
+                        "echo   Fermeture de l'ancienne version...",
                         "timeout /t 3 /nobreak >nul",
                         "taskkill /f /im \"" + os.path.basename(current) + "\" >nul 2>&1",
-                        "timeout /t 1 /nobreak >nul",
+                        "timeout /t 2 /nobreak >nul",
                         "cd /d \"" + exe_dir + "\"",
-                        ":: Chercher Python",
+                        "echo   Recherche de Python...",
                         "set \"PY=\"",
                         "python --version >nul 2>&1 && set \"PY=python\"",
                         "if not defined PY if exist \"%LocalAppData%\\Programs\\Python\\Python313\\python.exe\" set \"PY=%LocalAppData%\\Programs\\Python\\Python313\\python.exe\"",
-                        "if not defined PY if exist \"%LocalAppData%\\Programs\\Python\\Python312\\python.exe\" set \"PY=%LocalAppData%\\Programs\\Python\\Python312\\python.exe\"",
+                        "if not defined PY if exist \"%LocalAppData%\\Programs\\Python\\Python312\\python.exe\" set \"PY=%LocalAppData%\\Programs\\Python\\Python311\\python.exe\"",
                         "if not defined PY if exist \"%LocalAppData%\\Programs\\Python\\Python311\\python.exe\" set \"PY=%LocalAppData%\\Programs\\Python\\Python311\\python.exe\"",
                         "if not defined PY (",
-                        "    echo   Python introuvable. Relance de l'ancienne version.",
-                        "    timeout /t 2 /nobreak >nul",
+                        "    echo   [ERREUR] Python introuvable !",
+                        "    echo   Relance de l'ancienne version.",
+                        "    pause",
                         "    start \"\" /d \"" + exe_dir + "\" \"" + os.path.basename(current) + "\"",
                         "    del /f /q \"%~f0\"",
                         "    exit /b 1",
                         ")",
-                        "echo   Verification de PyInstaller...",
-                        "\"%PY%\" -m pip install --quiet pyinstaller pillow",
-                        "echo   Compilation de la nouvelle version...",
+                        "echo   Python trouve : %PY%",
+                        "echo   Installation de PyInstaller (peut prendre 1 min)...",
+                        "\"%PY%\" -m pip install --upgrade pyinstaller pillow",
+                        "echo   Compilation de la nouvelle version (1 a 2 min)...",
                         "\"%PY%\" -m PyInstaller --onefile --noconsole --name ScannerFichiers " + icon_arg + "--clean --distpath \"" + exe_dir + "\\dist_upd\" --workpath \"" + exe_dir + "\\build_upd\" --specpath \"" + exe_dir + "\" \"" + exe_dir + "\\file_scanner_gui.pyw\"",
-                        "if exist \"" + exe_dir + "\\dist_upd\\ScannerFichiers.exe\" (",
-                        "    copy /Y \"" + exe_dir + "\\dist_upd\\ScannerFichiers.exe\" \"" + current + "\" >nul",
-                        "    echo   Mise a jour terminee !",
-                        ") else (",
-                        "    echo   Echec de la compilation. Ancienne version conservee.",
-                        "    timeout /t 4 /nobreak >nul",
+                        "if not exist \"" + exe_dir + "\\dist_upd\\ScannerFichiers.exe\" (",
+                        "    echo.",
+                        "    echo   [ERREUR] La compilation a echoue !",
+                        "    echo   L'ancienne version va etre relancee.",
+                        "    pause",
+                        "    rd /s /q \"" + exe_dir + "\\build_upd\" >nul 2>&1",
+                        "    start \"\" /d \"" + exe_dir + "\" \"" + os.path.basename(current) + "\"",
+                        "    del /f /q \"%~f0\"",
+                        "    exit /b 1",
+                        ")",
+                        "echo   Remplacement de l'executable...",
+                        "copy /Y \"" + exe_dir + "\\dist_upd\\ScannerFichiers.exe\" \"" + current + "\"",
+                        "if errorlevel 1 (",
+                        "    echo   [ERREUR] Impossible de remplacer l'exe (fichier verrouille?).",
+                        "    pause",
                         ")",
                         "rd /s /q \"" + exe_dir + "\\dist_upd\" >nul 2>&1",
                         "rd /s /q \"" + exe_dir + "\\build_upd\" >nul 2>&1",
                         "del /f /q \"" + exe_dir + "\\ScannerFichiers.spec\" >nul 2>&1",
-                        "echo   Relance de l'application...",
+                        "echo.",
+                        "echo   ========================================",
+                        "echo     MISE A JOUR TERMINEE !",
+                        "echo   ========================================",
                         "timeout /t 2 /nobreak >nul",
-                        ":: Relancer l'exe (working dir explicite pour gerer les espaces)",
                         "start \"\" /d \"" + exe_dir + "\" \"" + os.path.basename(current) + "\"",
                         "timeout /t 1 /nobreak >nul",
                         "del /f /q \"%~f0\"",
@@ -1212,7 +1225,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v8.2",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v8.3",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -3841,7 +3854,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "8.2"
+CURRENT_VERSION = "8.3"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
