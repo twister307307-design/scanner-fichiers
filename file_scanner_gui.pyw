@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v8.3 - Interface Graphique
+Scanner de Fichiers Avancé v8.4 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v8.3 :
+Nouveautés v8.4 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -711,7 +711,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v8.3")
+        self.root.title("Scanner de Fichiers Avancé v8.4")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1225,7 +1225,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v8.3",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v8.4",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1273,6 +1273,14 @@ class ScannerApp:
                                      highlightthickness=1, highlightcolor=self.ACCENT,
                                      highlightbackground=self.BG3)
         self.roots_list.pack(fill=tk.X, pady=(0, 4))
+        # Activer le glisser-deposer de dossiers si tkinterdnd2 est dispo
+        try:
+            from tkinterdnd2 import DND_FILES
+            self.roots_list.drop_target_register(DND_FILES)
+            self.roots_list.dnd_bind("<<Drop>>", self._on_drop_folders)
+            self._dnd_ok = True
+        except Exception:
+            self._dnd_ok = False
         btn_row = tk.Frame(left, bg=self.BG)
         btn_row.pack(fill=tk.X, pady=(0, 8))
         self._btn(btn_row, "＋ Ajouter", self._add_folder, self.ACCENT).pack(side=tk.LEFT, padx=(0, 4))
@@ -1549,6 +1557,15 @@ class ScannerApp:
         self._search_entry.pack(side=tk.LEFT, padx=4)
         tk.Label(search_frame, text="(filtre l'onglet Suspects)", font=("Consolas", 7),
                  fg=self.DIMFG, bg=self.BG2).pack(side=tk.LEFT)
+
+        # ── Barre de progression graphique coloree ──
+        prog_frame = tk.Frame(right, bg=self.BG2)
+        prog_frame.pack(fill=tk.X, before=notebook, pady=(0, 2))
+        self._prog_canvas = tk.Canvas(prog_frame, height=18, bg=self.BG3,
+                                      highlightthickness=0, bd=0)
+        self._prog_canvas.pack(fill=tk.X, padx=6, pady=2)
+        self._prog_pct = 0
+        self._prog_canvas.bind("<Configure>", lambda e: self._draw_progress_bar())
 
         # Status bar
         self.status_bar = tk.Label(self.root, text="Prêt.", font=("Consolas", 8),
@@ -2421,6 +2438,30 @@ Lien documentation API :
         if folder:
             self.roots_list.insert(tk.END, folder)
 
+    def _on_drop_folders(self, event):
+        """Gere le glisser-deposer de dossiers/fichiers sur la liste."""
+        # event.data contient les chemins, possiblement entre accolades si espaces
+        data = event.data
+        paths = []
+        # Parser les chemins (format Tk : {chemin avec espaces} chemin2 ...)
+        import re
+        for m in re.finditer(r"\{([^}]*)\}|(\S+)", data):
+            p = m.group(1) if m.group(1) is not None else m.group(2)
+            if p:
+                paths.append(p)
+        existing = set(self.roots_list.get(0, tk.END))
+        added = 0
+        for p in paths:
+            # Si c'est un fichier, prendre son dossier parent
+            if os.path.isfile(p):
+                p = os.path.dirname(p)
+            if os.path.isdir(p) and p not in existing:
+                self.roots_list.insert(tk.END, p)
+                existing.add(p)
+                added += 1
+        if added:
+            self._set_status(f"✓ {added} dossier(s) ajouté(s) par glisser-déposer", self.GREEN)
+
     def _remove_folder(self):
         for i in reversed(self.roots_list.curselection()):
             self.roots_list.delete(i)
@@ -2593,6 +2634,7 @@ Lien documentation API :
         self.pause_event.clear()
         self.btn_pause.config(state=tk.NORMAL, text="⏸  PAUSE")
         self._start_spinner()
+        self._set_progress(0)
         # Remettre toutes les cartes a zero pour ne pas tromper avec les anciennes valeurs
         try:
             self._card_set(self.card_scanned,   "0")
@@ -3327,6 +3369,8 @@ Lien documentation API :
 
     def _terminal_update_progress(self, pct, eta, speed, scanned, total, elapsed=0):
         bar_txt = make_progress_bar(pct)
+        # Mettre a jour la barre graphique coloree
+        self._set_progress(int(pct))
         m_eta, s_eta = divmod(int(max(eta, 0)), 60)
         m_el,  s_el  = divmod(int(elapsed), 60)
         eta_str     = f"{m_eta}m{s_eta:02d}s"
@@ -3376,6 +3420,39 @@ Lien documentation API :
 
     def _set_status(self, text, color=None):
         self.status_bar.config(text=text, fg=color or self.DIMFG)
+
+    def _set_progress(self, pct):
+        """Met a jour la barre de progression graphique (0-100)."""
+        self._prog_pct = max(0, min(100, pct))
+        self._draw_progress_bar()
+
+    def _draw_progress_bar(self):
+        """Dessine la barre coloree selon l'avancement (rouge->orange->vert)."""
+        try:
+            c = self._prog_canvas
+            c.delete("all")
+            w = c.winfo_width()
+            h = c.winfo_height()
+            if w <= 1:
+                return
+            pct = self._prog_pct
+            fill_w = int(w * pct / 100)
+            # Couleur selon avancement : rouge (debut) -> orange -> jaune -> vert (fin)
+            if pct < 33:
+                color = "#ff5252"
+            elif pct < 66:
+                color = "#ff9800"
+            elif pct < 95:
+                color = "#ffd740"
+            else:
+                color = self.GREEN
+            if fill_w > 0:
+                c.create_rectangle(0, 0, fill_w, h, fill=color, outline="")
+            # Texte pourcentage centre
+            c.create_text(w // 2, h // 2, text=f"{pct}%",
+                          fill=self.FG, font=("Consolas", 8, "bold"))
+        except Exception:
+            pass
 
     def _start_spinner(self):
         """Lance l'animation du spinner dans la status bar pendant le scan."""
@@ -3854,7 +3931,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "8.3"
+CURRENT_VERSION = "8.4"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
@@ -3900,7 +3977,12 @@ def main():
         _send_show_signal()
         return
 
-    root = tk.Tk()
+    # Utiliser TkinterDnD pour le glisser-deposer si la lib est dispo
+    try:
+        from tkinterdnd2 import TkinterDnD
+        root = TkinterDnD.Tk()
+    except Exception:
+        root = tk.Tk()
     app  = ScannerApp(root)
 
     def _poll_signal():
