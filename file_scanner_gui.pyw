@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v7.9 - Interface Graphique
+Scanner de Fichiers Avancé v8.0 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v7.9 :
+Nouveautés v8.0 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -711,7 +711,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v7.9")
+        self.root.title("Scanner de Fichiers Avancé v8.0")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -905,43 +905,58 @@ class ScannerApp:
                 exe_dir   = os.path.dirname(current)
 
                 if is_frozen:
-                    # .exe : on ne peut pas remplacer un exe en cours d'execution sous Windows.
-                    # On ecrit le nouveau .pyw dans le dossier d'install,
-                    # puis on cree un updater.bat qui :
-                    #   1. attend que l'exe se ferme
-                    #   2. relance PyInstaller pour recompiler (si Python dispo)
-                    #      OU remplace juste le .pyw et relance l'exe directement
-                    # Solution simple et fiable : ecrire updater.bat + le nouveau .pyw,
-                    # fermer l'appli, le bat attend 2s, remplace l'exe, relance.
+                    # .exe : on ne peut pas remplacer un exe en cours d'execution.
+                    # On ecrit le nouveau .pyw a cote, puis un updater.bat recompile
+                    # l'exe et le relance automatiquement. Fenetre VISIBLE pour suivre.
                     new_pyw  = os.path.join(exe_dir, "file_scanner_gui.pyw")
                     tmp_pyw  = new_pyw + ".tmp"
                     with open(tmp_pyw, "wb") as f:
                         f.write(new_code)
                     os.replace(tmp_pyw, new_pyw)
 
-                    # Ecrire le updater.bat
                     updater = os.path.join(exe_dir, "updater.bat")
-                    exe_name = os.path.basename(current)
+                    icon_arg = ""
+                    for ic in ("plume.ico", "app.ico", "scanner.ico"):
+                        if os.path.exists(os.path.join(exe_dir, ic)):
+                            icon_arg = '--icon \"' + ic + '\" '
+                            break
                     bat_lines = [
                         "@echo off",
+                        "title Mise a jour ScannerFichiers",
+                        "echo.",
+                        "echo   Mise a jour en cours, merci de patienter...",
+                        "echo   (recompilation de l'application, 1 a 2 minutes)",
+                        "echo.",
                         "timeout /t 2 /nobreak >nul",
                         "cd /d \"" + exe_dir + "\"",
+                        ":: Chercher Python",
                         "set PY=",
-                        "for %%P in (python.exe) do ( %%~P --version >nul 2>&1 & if not errorlevel 1 set PY=%%~P )",
-                        "if not defined PY set PY=%LocalAppData%\\Programs\\Python\\Python313\\python.exe",
-                        "if not defined PY set PY=%LocalAppData%\\Programs\\Python\\Python312\\python.exe",
-                        "if not defined PY set PY=%LocalAppData%\\Programs\\Python\\Python311\\python.exe",
-                        "if not exist \"%PY%\" (echo Python introuvable. & pause & exit /b 1)",
-                        "\"%PY%\" -m PyInstaller --onefile --noconsole --name ScannerFichiers --clean --distpath \"" + exe_dir + "\\dist_upd\" file_scanner_gui.pyw >nul 2>&1",
-                        "if exist \"" + exe_dir + "\\dist_upd\\ScannerFichiers.exe\" copy /Y \"" + exe_dir + "\\dist_upd\\ScannerFichiers.exe\" \"" + current + "\" >nul",
+                        "python --version >nul 2>&1 && set PY=python",
+                        "if not defined PY if exist \"%LocalAppData%\\Programs\\Python\\Python313\\python.exe\" set PY=%LocalAppData%\\Programs\\Python\\Python313\\python.exe",
+                        "if not defined PY if exist \"%LocalAppData%\\Programs\\Python\\Python312\\python.exe\" set PY=%LocalAppData%\\Programs\\Python\\Python312\\python.exe",
+                        "if not defined PY if exist \"%LocalAppData%\\Programs\\Python\\Python311\\python.exe\" set PY=%LocalAppData%\\Programs\\Python\\Python311\\python.exe",
+                        "if not defined PY ( echo Python introuvable. Relance de l'ancienne version. & start \"\" \"" + current + "\" & exit /b 1 )",
+                        "echo   Verification de PyInstaller...",
+                        "\"%PY%\" -m pip install --quiet pyinstaller pillow",
+                        "echo   Compilation de la nouvelle version...",
+                        "\"%PY%\" -m PyInstaller --onefile --noconsole --name ScannerFichiers " + icon_arg + "--clean --distpath \"" + exe_dir + "\\dist_upd\" --workpath \"" + exe_dir + "\\build_upd\" --specpath \"" + exe_dir + "\" file_scanner_gui.pyw",
+                        "if exist \"" + exe_dir + "\\dist_upd\\ScannerFichiers.exe\" (",
+                        "    copy /Y \"" + exe_dir + "\\dist_upd\\ScannerFichiers.exe\" \"" + current + "\" >nul",
+                        "    echo   Mise a jour terminee !",
+                        ") else (",
+                        "    echo   Echec de la compilation. Ancienne version conservee.",
+                        "    timeout /t 3 /nobreak >nul",
+                        ")",
                         "rd /s /q \"" + exe_dir + "\\dist_upd\" >nul 2>&1",
+                        "rd /s /q \"" + exe_dir + "\\build_upd\" >nul 2>&1",
+                        "del /f /q \"" + exe_dir + "\\ScannerFichiers.spec\" >nul 2>&1",
+                        "timeout /t 1 /nobreak >nul",
                         "start \"\" \"" + current + "\"",
                         "del /f /q \"" + updater + "\"",
                     ]
                     with open(updater, "w") as f:
                         f.write("\r\n".join(bat_lines))
 
-                    # Memoriser la version installee dans la config
                     try:
                         self.cfg["installed_version"] = self._remote_version
                         save_config(self.cfg)
@@ -982,9 +997,9 @@ class ScannerApp:
         def _do_restart():
             win.destroy()
             if is_frozen and updater:
-                # .exe : lancer updater.bat qui recompile et relance
-                subprocess.Popen(["cmd.exe", "/c", updater],
-                                  creationflags=subprocess.CREATE_NO_WINDOW)
+                # .exe : lancer updater.bat dans une fenetre VISIBLE
+                # (l'utilisateur voit la progression de la recompilation)
+                subprocess.Popen(["cmd.exe", "/c", "start", "", updater], shell=True)
             else:
                 # .pyw : relancer via pythonw.exe (sans fenetre noire) ou python.exe
                 pythonw = sys.executable.replace("python.exe", "pythonw.exe")
@@ -1176,7 +1191,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v7.9",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v8.0",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -3805,7 +3820,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "7.9"
+CURRENT_VERSION = "8.0"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
