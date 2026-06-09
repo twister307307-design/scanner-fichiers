@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v9.3 - Interface Graphique
+Scanner de Fichiers Avancé v9.4 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v9.3 :
+Nouveautés v9.4 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -748,7 +748,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v9.3")
+        self.root.title("Scanner de Fichiers Avancé v9.4")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1262,7 +1262,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v9.3",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v9.4",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1584,7 +1584,7 @@ class ScannerApp:
         self.log_errors    = self._log_tab(notebook, "🟠 Chiffrés")
         self.log_dblext    = self._log_tab(notebook, "🔺 Anomalies")
         self.log_access_errors = self._log_tab(notebook, "🟡 Erreurs accès")
-        self.log_persist   = self._log_tab(notebook, "🚀 Démarrage")
+        self.log_persist, self._persist_frame = self._log_tab(notebook, "🚀 Démarrage", return_frame=True)
         self.tab_stats     = self._build_stats_tab(notebook)
 
         # Compteurs sous-catégories indispo
@@ -2011,7 +2011,7 @@ Lien documentation API :
         finally:
             menu.grab_release()
 
-    def _log_tab(self, notebook, title):
+    def _log_tab(self, notebook, title, return_frame=False):
         frame = tk.Frame(notebook, bg=self.BG)
         notebook.add(frame, text=title)
         txt = scrolledtext.ScrolledText(frame, bg=self.BG2, fg=self.FG,
@@ -2021,6 +2021,8 @@ Lien documentation API :
         txt.pack(fill=tk.BOTH, expand=True)
         self._setup_tags(txt)
         self._bind_right_click(txt)
+        if return_frame:
+            return txt, frame
         return txt
 
     def _log_tab_with_action(self, notebook, title, btn_text, btn_cmd, btn_color):
@@ -2809,7 +2811,7 @@ Lien documentation API :
         # Basculer sur l'onglet Demarrage (sauf en mode auto au lancement)
         if not auto:
             try:
-                self.notebook.select(self.log_persist.master)
+                self.notebook.select(self._persist_frame)
             except Exception:
                 pass
 
@@ -4299,7 +4301,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "9.3"
+CURRENT_VERSION = "9.4"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
@@ -4362,8 +4364,6 @@ def main():
             app._show_window()
         root.after(500, _poll_signal)
     root.after(2000, app._check_update_async)
-    # Analyse automatique du demarrage au lancement (mode silencieux)
-    root.after(3000, lambda: app._scan_persistence(auto=True))
 
     root.after(500, _poll_signal)
 
