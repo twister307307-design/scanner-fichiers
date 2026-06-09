@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v8.5 - Interface Graphique
+Scanner de Fichiers Avancé v8.6 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v8.5 :
+Nouveautés v8.6 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -748,7 +748,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v8.5")
+        self.root.title("Scanner de Fichiers Avancé v8.6")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1262,7 +1262,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v8.5",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v8.6",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1342,6 +1342,7 @@ class ScannerApp:
         self.var_delete_dupes   = tk.BooleanVar(value=self.cfg.get("var_delete_dupes", False))
         self.var_save_report    = tk.BooleanVar(value=self.cfg.get("var_save_report", True))
         self.var_sound          = tk.BooleanVar(value=self.cfg.get("sound_enabled", True))
+        self.var_summary        = tk.BooleanVar(value=self.cfg.get("show_summary", True))
         # v3.0
         self.var_virustotal     = tk.BooleanVar(value=self.cfg.get("var_virustotal", False))
         self.var_quarantine     = tk.BooleanVar(value=self.cfg.get("var_quarantine", False))
@@ -1388,6 +1389,7 @@ class ScannerApp:
             # ── Rapports / divers ──
             ("Sauvegarder rapport .txt",      self.var_save_report,    self.GREEN,  "Rapport complet dans votre dossier utilisateur"),
             ("🔔 Son en fin de scan",         self.var_sound,          self.ACCENT, "Mélodie cristalline quand le scan est terminé"),
+            ("📋 Résumé en fin de scan",      self.var_summary,        self.GREEN,  "Affiche une popup récapitulative à la fin"),
         ]:
             row = tk.Frame(self._opt_frame, bg=self.BG)
             row.pack(fill=tk.X, pady=2)
@@ -2708,6 +2710,7 @@ Lien documentation API :
             "var_delete_dupes":   self.var_delete_dupes.get(),
             "var_save_report":    self.var_save_report.get(),
             "sound_enabled":      self.var_sound.get(),
+            "show_summary":       self.var_summary.get(),
             "var_virustotal":     self.var_virustotal.get(),
             "var_quarantine":     self.var_quarantine.get(),
             "var_detect_encrypted": self.var_detect_encrypted.get(),
@@ -3477,6 +3480,73 @@ Lien documentation API :
             "report":     self.report_path or "",
         })
 
+        # ── Popup resume de fin de scan ──
+        if not stopped and self.var_summary.get():
+            self._show_scan_summary(stats, safety, risk_label, risk_color, elapsed)
+
+    def _show_scan_summary(self, stats, safety, risk_label, risk_color, elapsed):
+        """Affiche une popup recapitulative en fin de scan."""
+        total_threats = (stats["corrupted"] + stats.get("suspects", 0)
+                         + stats.get("encrypted", 0) + stats.get("dblext", 0)
+                         + stats.get("hidden", 0) + stats.get("abnormal", 0))
+
+        win = tk.Toplevel(self.root)
+        win.title("Résumé du scan")
+        win.resizable(False, False)
+        win.configure(bg=self.BG)
+        win.grab_set()
+        self.root.update_idletasks()
+        px = self.root.winfo_x() + self.root.winfo_width()  // 2
+        py = self.root.winfo_y() + self.root.winfo_height() // 2
+        w, h = 420, 380
+        win.geometry(f"{w}x{h}+{px - w//2}+{py - h//2}")
+
+        # Score en gros avec couleur
+        tk.Label(win, text=f"{safety}/100", font=("Consolas", 32, "bold"),
+                 fg=risk_color, bg=self.BG).pack(pady=(20, 0))
+        tk.Label(win, text=f"SÉCURITÉ : {risk_label}", font=("Consolas", 11, "bold"),
+                 fg=risk_color, bg=self.BG).pack()
+
+        # Recommandation
+        if safety >= 80:
+            reco = "✓ Votre système semble sain.\nAucune action urgente requise."
+        elif safety >= 50:
+            reco = "⚠ Quelques éléments à surveiller.\nVérifiez les onglets Suspects et Anomalies."
+        else:
+            reco = "🚨 Plusieurs menaces détectées !\nExaminez les fichiers signalés en priorité."
+        tk.Label(win, text=reco, font=("Consolas", 8), fg=self.FG, bg=self.BG,
+                 justify="center").pack(pady=(8, 12))
+
+        # Stats détaillées
+        stats_frame = tk.Frame(win, bg=self.BG3, padx=16, pady=10)
+        stats_frame.pack(fill=tk.X, padx=20)
+        rows = [
+            ("📁 Fichiers scannés", f"{stats['scanned']:,}", self.ACCENT),
+            ("💾 Taille totale", format_size(stats['total_size']), self.FG),
+            ("🔴 Corrompus", str(stats['corrupted']), self.RED),
+            ("🛡 Suspects", str(stats.get('suspects', 0)), self.YELLOW),
+            ("🟣 Doublons", str(stats['duplicates']), self.PURPLE),
+            ("🔺 Anomalies", str(stats.get('dblext', 0) + stats.get('hidden', 0) + stats.get('abnormal', 0)), "#e91e63"),
+            ("⏱ Durée", format_duration(elapsed), self.DIMFG),
+        ]
+        for label, val, color in rows:
+            row = tk.Frame(stats_frame, bg=self.BG3)
+            row.pack(fill=tk.X, pady=1)
+            tk.Label(row, text=label, font=("Consolas", 8), fg=self.DIMFG,
+                     bg=self.BG3, anchor="w").pack(side=tk.LEFT)
+            tk.Label(row, text=val, font=("Consolas", 8, "bold"), fg=color,
+                     bg=self.BG3, anchor="e").pack(side=tk.RIGHT)
+
+        tk.Label(win, text=f"⚠ {total_threats} menace(s) potentielle(s) au total",
+                 font=("Consolas", 8, "bold"),
+                 fg=self.RED if total_threats else self.GREEN, bg=self.BG).pack(pady=(10, 4))
+
+        tk.Button(win, text="Fermer", font=("Consolas", 8, "bold"),
+                  bg=self.ACCENT, fg="#000", activebackground=self.BG2,
+                  borderwidth=0, padx=20, pady=5, cursor="hand2", relief=tk.FLAT,
+                  command=win.destroy).pack(pady=(4, 0))
+        win.bind("<Escape>", lambda e: win.destroy())
+
     # ── Terminal ───────────────────────────────────────────────────────────────
 
     def _terminal_write_header(self, roots):
@@ -4066,7 +4136,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "8.5"
+CURRENT_VERSION = "8.6"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
