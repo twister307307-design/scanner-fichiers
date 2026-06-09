@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v9.7 - Interface Graphique
+Scanner de Fichiers Avancé v9.9 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v9.7 :
+Nouveautés v9.9 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -748,7 +748,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v9.7")
+        self.root.title("Scanner de Fichiers Avancé v9.9")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -757,6 +757,7 @@ class ScannerApp:
         self.scan_thread   = None
         self.stop_event    = threading.Event()
         self.pause_event   = threading.Event()  # set = en pause
+        self._persist_running = False  # True si scan demarrage en cours
         self._device_response = None   # 'retry' | 'ignore'
         self._device_event    = threading.Event()
         self._spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -1262,7 +1263,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v9.7",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v9.9",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -2684,6 +2685,13 @@ Lien documentation API :
         win.bind("<Escape>", lambda e: _cancel())
 
     def _start_scan(self):
+        # Bloquer si un scan du demarrage est en cours
+        if self._persist_running:
+            messagebox.showwarning(
+                "Analyse en cours",
+                "Un scan du démarrage est actuellement en cours.\n\n"
+                "Veuillez attendre qu'il se termine avant de lancer un scan de fichiers.")
+            return
         roots = list(self.roots_list.get(0, tk.END))
         if not roots:
             messagebox.showwarning("Aucun dossier", "Ajoutez au moins un dossier à scanner.")
@@ -2807,6 +2815,19 @@ Lien documentation API :
                 messagebox.showinfo("Windows uniquement",
                     "Le scan du démarrage n'est disponible que sous Windows.")
             return
+
+        # Bloquer si un scan de fichiers est en cours
+        if self.scan_thread is not None and self.scan_thread.is_alive():
+            if not auto:
+                messagebox.showwarning(
+                    "Scan en cours",
+                    "Un scan de fichiers est actuellement en cours.\n\n"
+                    "Veuillez attendre qu'il se termine avant de scanner le démarrage.")
+            return
+        # Empecher deux scans demarrage simultanes
+        if self._persist_running:
+            return
+        self._persist_running = True
 
         # Basculer sur l'onglet Demarrage (sauf en mode auto au lancement)
         if not auto:
@@ -3025,6 +3046,7 @@ Lien documentation API :
                     else f"Scan démarrage terminé — {suspect} suspect(s)",
                     self.DIMFG if total == 0 else (self.RED if suspect else self.GREEN)),
             ])
+            self._persist_running = False
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -3784,6 +3806,30 @@ Lien documentation API :
         self._bar_line = self._file_line = None
         self._bounce_pos = 0
         self._bounce_dir = 1
+        # Ecrire un en-tete de section en haut de chaque categorie
+        self._write_section_headers()
+
+    def _section_header(self, title):
+        """Genere un en-tete encadre style ═══ TITRE ═══."""
+        return f"  ═══ {title} ═══\n"
+
+    def _write_section_headers(self):
+        headers = [
+            (self.log_corrupted,    "FICHIERS CORROMPUS"),
+            (self.log_dupes,        "DOUBLONS DÉTECTÉS"),
+            (self.log_errors,       "FICHIERS CHIFFRÉS"),
+            (self.log_dblext,       "ANOMALIES DÉTECTÉES"),
+            (self.log_access_errors,"ERREURS D'ACCÈS"),
+        ]
+        for widget, title in headers:
+            if widget is None:
+                continue
+            try:
+                widget.config(state=tk.NORMAL)
+                widget.insert("1.0", self._section_header(title), "cyan")
+                widget.config(state=tk.DISABLED)
+            except Exception:
+                pass
 
     def _set_status(self, text, color=None):
         self.status_bar.config(text=text, fg=color or self.DIMFG)
@@ -4313,7 +4359,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "9.7"
+CURRENT_VERSION = "9.9"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
