@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v8.9 - Interface Graphique
+Scanner de Fichiers Avancé v9.0 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v8.9 :
+Nouveautés v9.0 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -748,7 +748,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v8.9")
+        self.root.title("Scanner de Fichiers Avancé v9.0")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1262,7 +1262,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v8.9",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v9.0",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -2786,73 +2786,84 @@ Lien documentation API :
             self._set_status("⏸ Scan en pause", self.YELLOW)
 
     def _scan_processes(self):
-        """Analyse les processus en cours d'execution + signatures numeriques."""
-        if not HAS_PSUTIL:
-            messagebox.showwarning(
-                "Module manquant",
-                "L'analyse des processus necessite le module 'psutil'.\n\n"
-                "Installez-le avec :  pip install psutil")
+        """Analyse les processus en cours d'execution + signatures numeriques.
+        Utilise les commandes natives Windows (pas besoin de psutil)."""
+        if platform.system() != "Windows" and not HAS_PSUTIL:
+            messagebox.showinfo("Windows uniquement",
+                "L'analyse des processus n'est disponible que sous Windows.")
             return
 
-        # Vider l'onglet et passer dessus
         self.log_procs.config(state=tk.NORMAL)
         self.log_procs.delete("1.0", tk.END)
         self.log_procs.config(state=tk.DISABLED)
         self.btn_procscan.config(state=tk.DISABLED, text="⏳ Analyse...")
         self._set_status("Analyse des processus en cours...", self.PURPLE)
 
+        def _get_processes():
+            """Retourne une liste de (pid, name, exe) via methode native ou psutil."""
+            procs = []
+            if HAS_PSUTIL:
+                for p in psutil.process_iter(["pid", "name", "exe"]):
+                    try:
+                        procs.append((p.info.get("pid", "?"),
+                                      p.info.get("name", "?"),
+                                      p.info.get("exe")))
+                    except Exception:
+                        continue
+                return procs
+            # Methode native Windows : PowerShell Get-Process
+            try:
+                import subprocess
+                ps = ("Get-Process | Where-Object {$_.Path} | "
+                      "Select-Object Id,ProcessName,Path | "
+                      "ForEach-Object { \"$($_.Id)|$($_.ProcessName)|$($_.Path)\" }")
+                r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                                   capture_output=True, timeout=20,
+                                   creationflags=0x08000000)
+                out = r.stdout.decode(errors="replace")
+                for line in out.splitlines():
+                    parts = line.strip().split("|", 2)
+                    if len(parts) == 3:
+                        procs.append((parts[0], parts[1], parts[2]))
+            except Exception:
+                pass
+            return procs
+
         def _worker():
             suspicious = []
             total = 0
             self._log(self.log_procs, "  ═══ ANALYSE DES PROCESSUS EN COURS ═══\n", "cyan")
-
-            # Dossiers "normaux" pour un exe
-            safe_dirs = ["windows", "program files", "program files (x86)"]
-            # Dossiers suspects pour un exe qui tourne
             risky_dirs = ["temp", "appdata\\local\\temp", "downloads",
                           "\\users\\public", "\\programdata\\", "recycle"]
 
-            for proc in psutil.process_iter(["pid", "name", "exe"]):
+            for pid, name, exe in _get_processes():
                 try:
-                    info = proc.info
-                    exe = info.get("exe")
-                    name = info.get("name", "?")
-                    pid = info.get("pid", "?")
                     if not exe or not os.path.exists(exe):
                         continue
                     total += 1
                     exe_low = exe.lower()
                     reasons = []
-
-                    # 1. Emplacement suspect
                     for rd in risky_dirs:
                         if rd in exe_low:
                             reasons.append(f"emplacement suspect ({rd})")
                             break
-
-                    # 2. Double extension
                     dbl, dbl_r = is_double_extension(exe)
                     if dbl:
                         reasons.append(dbl_r)
-
-                    # 3. Nom suspect
                     for pat in SUSPICIOUS_NAME_PATTERNS:
-                        if pat in name.lower():
+                        if pat in str(name).lower():
                             reasons.append(f"nom suspect ({pat})")
                             break
-
                     if reasons:
                         suspicious.append((pid, name, exe, reasons))
-                except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
+                except Exception:
                     continue
 
-            # Afficher les resultats
             if suspicious:
                 self.root.after(0, lambda: self._log(
                     self.log_procs,
                     f"\n  ⚠ {len(suspicious)} processus suspect(s) sur {total} analyses :\n", "red"))
                 for pid, name, exe, reasons in suspicious:
-                    # Verifier la signature
                     sig_status, signer = check_signature_windows(exe)
                     sig_txt = {
                         "valid":    f"✓ signé ({signer})",
@@ -2878,6 +2889,21 @@ Lien documentation API :
             ])
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _check_vt_file(self, filepath, api_key):
+        """Calcule le MD5 d'un fichier et interroge VirusTotal.
+        Retourne le nombre de detections (0 = sain, -1 = inconnu/erreur)."""
+        try:
+            import hashlib
+            h = hashlib.md5()
+            with open(filepath, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    h.update(chunk)
+            md5 = h.hexdigest()
+            is_mal, detections, total, _ = check_virustotal(md5, api_key)
+            return detections
+        except Exception:
+            return -1
 
     def _scan_persistence(self):
         """Detecte les programmes lances au demarrage de Windows (persistance)."""
@@ -2909,30 +2935,61 @@ Lien documentation API :
                 reasons = []
                 # Extraire le chemin de l'exe de la commande
                 exe_path = command.strip('"').split('"')[0] if '"' in command else command.split()[0] if command.split() else command
+
+                # Verifier la signature numerique d'abord : si signe par un editeur
+                # connu (Microsoft, etc.), c'est legitime meme si c'est un script/exe.
+                sig_status, signer = ("unknown", "")
+                if os.path.exists(exe_path):
+                    sig_status, signer = check_signature_windows(exe_path)
+
+                # Si signature valide -> considere comme SUR (PowerShell, taches MS, etc.)
+                if sig_status == "valid":
+                    block = (f"\n  ✓ {name}  [{source}]\n"
+                             f"     {command}\n"
+                             f"     Signé : {signer}")
+                    self.root.after(0, lambda b=block: self._log(self.log_persist, b, "green"))
+                    return
+
+                # Sinon, chercher des raisons de suspicion
                 for rd in risky:
                     if rd in cmd_low:
                         reasons.append(f"emplacement suspect ({rd})")
                         break
-                # Double extension
                 dbl, dbl_r = is_double_extension(exe_path)
                 if dbl:
                     reasons.append(dbl_r)
-                # Nom suspect
                 for pat in SUSPICIOUS_NAME_PATTERNS:
                     if pat in name.lower() or pat in cmd_low:
                         reasons.append(f"nom suspect ({pat})")
                         break
-                # Script au demarrage (souvent suspect)
                 for ext in (".vbs", ".js", ".bat", ".cmd", ".ps1", ".hta"):
                     if ext in cmd_low:
                         reasons.append(f"script au démarrage ({ext})")
                         break
 
+                # Si suspect ET qu'une cle VirusTotal est dispo -> verifier sur VT
+                vt_info = ""
+                if reasons and self.var_virustotal.get() and os.path.exists(exe_path):
+                    vt_key = self.vt_key_var.get().strip()
+                    if len(vt_key) == 64:
+                        detections = self._check_vt_file(exe_path, vt_key)
+                        if detections == 0:
+                            # Clean sur VirusTotal -> on lave le soupcon
+                            block = (f"\n  ✓ {name}  [{source}]\n"
+                                     f"     {command}\n"
+                                     f"     VirusTotal : 0 détection (sain)")
+                            self.root.after(0, lambda b=block: self._log(self.log_persist, b, "green"))
+                            return
+                        elif detections > 0:
+                            vt_info = f" | 🦠 VirusTotal : {detections} détection(s)"
+
                 if reasons:
                     suspect += 1
+                    sig_note = {"unsigned": " | ⚠ non signé",
+                                "invalid": " | ✗ signature invalide"}.get(sig_status, "")
                     block = (f"\n  ⚠ {name}  [{source}]\n"
                              f"     {command}\n"
-                             f"     Raisons : {', '.join(reasons)}")
+                             f"     Raisons : {', '.join(reasons)}{sig_note}{vt_info}")
                     self.root.after(0, lambda b=block: self._log(self.log_persist, b, "red"))
                 else:
                     block = f"\n  ✓ {name}  [{source}]\n     {command}"
@@ -4299,7 +4356,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "8.9"
+CURRENT_VERSION = "9.0"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
