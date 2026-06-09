@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v9.5 - Interface Graphique
+Scanner de Fichiers Avancé v9.6 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v9.5 :
+Nouveautés v9.6 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -748,7 +748,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v9.5")
+        self.root.title("Scanner de Fichiers Avancé v9.6")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1262,7 +1262,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v9.5",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v9.6",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1526,6 +1526,9 @@ class ScannerApp:
         self.btn_start = self._btn(left, "▶  LANCER LE SCAN", self._start_scan, self.GREEN, big=True)
         self.btn_start.pack(fill=tk.X, pady=(0, 6))
         Tooltip(self.btn_start, "Lance le scan sur les dossiers sélectionnés")
+        self.btn_persist = self._btn(left, "🚀  Scanner le démarrage", self._scan_persistence, "#e91e63")
+        self.btn_persist.pack(fill=tk.X, pady=(0, 6))
+        Tooltip(self.btn_persist, "Détecte les programmes lancés au démarrage de Windows")
         self.btn_stop = self._btn(left, "■  ARRÊTER", self._stop_scan, self.RED, big=True)
         self.btn_stop.pack(fill=tk.X)
         self.btn_stop.config(state=tk.DISABLED)
@@ -1543,9 +1546,6 @@ class ScannerApp:
         self.btn_history = self._btn(left, "🕓  Historique scans", self._show_history, self.DIMFG)
         self.btn_history.pack(fill=tk.X)
         Tooltip(self.btn_history, "Affiche les 20 derniers scans")
-        self.btn_persist = self._btn(left, "🚀  Scanner le démarrage", self._scan_persistence, "#e91e63")
-        self.btn_persist.pack(fill=tk.X, pady=(3, 0))
-        Tooltip(self.btn_persist, "Détecte les programmes lancés au démarrage de Windows")
 
         # ── Panel droit ──
         right = tk.Frame(body, bg=self.BG)
@@ -3775,7 +3775,7 @@ Lien documentation API :
         w.config(state=tk.DISABLED)
 
     def _clear_logs(self):
-        for w in (self.log_all, self.log_corrupted, self.log_dupes, self.log_errors, self.log_dblext, self.log_access_errors):
+        for w in (self.log_all, self.log_corrupted, self.log_dupes, self.log_errors, self.log_dblext, self.log_access_errors, self.log_persist):
             w.config(state=tk.NORMAL)
             w.delete("1.0", tk.END)
             w.config(state=tk.DISABLED)
@@ -4313,7 +4313,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "9.5"
+CURRENT_VERSION = "9.6"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
