@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v9.4 - Interface Graphique
+Scanner de Fichiers Avancé v9.5 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v9.4 :
+Nouveautés v9.5 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -748,7 +748,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v9.4")
+        self.root.title("Scanner de Fichiers Avancé v9.5")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1262,7 +1262,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v9.4",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v9.5",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -2826,17 +2826,38 @@ Lien documentation API :
             self._log(self.log_persist, "  ═══ PROGRAMMES AU DÉMARRAGE DE WINDOWS ═══\n", "cyan")
             total = 0
             suspect = 0
+            results = {"green": [], "yellow": [], "red": []}
 
             # Emplacements suspects pour un programme de demarrage
             risky = ["temp", "appdata\\local\\temp", "downloads", "\\public\\",
                      "programdata\\", "\\roaming\\", "recycle"]
 
+            def _extract_exe_path(command):
+                """Extrait proprement le chemin de l'exe d'une commande de demarrage."""
+                cmd = command.strip()
+                # Resoudre les variables d'environnement (%windir%, %ProgramFiles%...)
+                cmd = os.path.expandvars(cmd)
+                # Cas 1 : chemin entre guillemets -> prendre ce qui est dedans
+                if cmd.startswith('"'):
+                    end = cmd.find('"', 1)
+                    if end > 0:
+                        return cmd[1:end]
+                # Cas 2 : pas de guillemets. Le chemin peut contenir des espaces.
+                # On cherche la position d'une extension executable suivie d'un espace+argument
+                low = cmd.lower()
+                for ext in (".exe", ".bat", ".cmd", ".com", ".scr", ".vbs",
+                            ".js", ".ps1", ".hta", ".pif"):
+                    idx = low.find(ext)
+                    if idx != -1:
+                        return cmd[:idx + len(ext)]
+                # Cas 3 : sinon, premier token avant un espace
+                return cmd.split()[0] if cmd.split() else cmd
+
             def analyze_entry(name, command, source):
                 nonlocal total, suspect
                 total += 1
                 cmd_low = command.lower()
-                # Extraire le chemin de l'exe de la commande
-                exe_path = command.strip('"').split('"')[0] if '"' in command else command.split()[0] if command.split() else command
+                exe_path = _extract_exe_path(command)
 
                 # Verifier la signature numerique d'abord : si signe par un editeur
                 # connu (Microsoft, etc.), c'est legitime meme si c'est un script/exe.
@@ -2849,33 +2870,23 @@ Lien documentation API :
                     block = (f"\n  ✓ {name}  [{source}]\n"
                              f"     {command}\n"
                              f"     Signé : {signer}")
-                    self.root.after(0, lambda b=block: self._log(self.log_persist, b, "green"))
+                    results["green"].append(block)
                     return
 
-                # Sinon, chercher des raisons de suspicion
-                # On distingue : menaces SERIEUSES (rouge) vs simples notes (jaune/info)
-                hard_reasons = []   # vraies menaces -> rouge
-                soft_notes   = []   # juste a noter -> orange
-
-                # Emplacement inhabituel = simple note (plein de jeux legitimes y sont)
+                hard_reasons = []
+                soft_notes   = []
                 location_note = None
                 for rd in risky:
                     if rd in cmd_low:
                         location_note = rd
                         break
-
-                # Double extension = MENACE serieuse
                 dbl, dbl_r = is_double_extension(exe_path)
                 if dbl:
                     hard_reasons.append(dbl_r)
-
-                # Nom vraiment suspect (liste resserree) = MENACE serieuse
                 for pat in SUSPICIOUS_NAME_PATTERNS:
                     if pat in name.lower() or pat in cmd_low:
                         hard_reasons.append(f"nom suspect ({pat})")
                         break
-
-                # Script au demarrage NON signe = menace (un script signe serait deja passe)
                 is_script = False
                 for ext in (".vbs", ".js", ".bat", ".cmd", ".ps1", ".hta"):
                     if ext in cmd_low:
@@ -2883,13 +2894,9 @@ Lien documentation API :
                         break
                 if is_script and sig_status in ("unsigned", "invalid", "unknown"):
                     hard_reasons.append("script non signé au démarrage")
-
-                # Fichier introuvable = note (entree orpheline)
                 if not os.path.exists(exe_path):
                     soft_notes.append("fichier introuvable")
 
-                # Si une cle VirusTotal est dispo, verifier les cas a risque
-                vt_info = ""
                 if (hard_reasons or location_note) and self.var_virustotal.get() and os.path.exists(exe_path):
                     vt_key = self.vt_key_var.get().strip()
                     if len(vt_key) == 64:
@@ -2898,14 +2905,12 @@ Lien documentation API :
                             block = (f"\n  ✓ {name}  [{source}]\n"
                                      f"     {command}\n"
                                      f"     VirusTotal : 0 détection (sain)")
-                            self.root.after(0, lambda b=block: self._log(self.log_persist, b, "green"))
+                            results["green"].append(block)
                             return
                         elif detections > 0:
                             hard_reasons.append(f"🦠 VirusTotal : {detections} détection(s)")
 
-                # Decision finale
                 if hard_reasons:
-                    # MENACE confirmee -> rouge
                     suspect += 1
                     sig_note = {"unsigned": " | non signé",
                                 "invalid": " | signature invalide"}.get(sig_status, "")
@@ -2913,9 +2918,8 @@ Lien documentation API :
                     block = (f"\n  ⚠ {name}  [{source}]\n"
                              f"     {command}\n"
                              f"     Menaces : {', '.join(hard_reasons)}{sig_note}{extra}")
-                    self.root.after(0, lambda b=block: self._log(self.log_persist, b, "red"))
+                    results["red"].append(block)
                 elif location_note or soft_notes:
-                    # Juste a surveiller -> orange (PAS compte comme suspect)
                     notes = []
                     if location_note:
                         notes.append(f"emplacement inhabituel ({location_note})")
@@ -2924,10 +2928,10 @@ Lien documentation API :
                     block = (f"\n  • {name}  [{source}]\n"
                              f"     {command}\n"
                              f"     À surveiller : {', '.join(notes)}{sig_note}")
-                    self.root.after(0, lambda b=block: self._log(self.log_persist, b, "yellow"))
+                    results["yellow"].append(block)
                 else:
                     block = f"\n  ✓ {name}  [{source}]\n     {command}"
-                    self.root.after(0, lambda b=block: self._log(self.log_persist, b, "green"))
+                    results["green"].append(block)
 
             # 1. Cles Run du registre (HKCU et HKLM)
             run_keys = [
@@ -2991,6 +2995,14 @@ Lien documentation API :
                         continue
             except Exception:
                 pass
+
+            # Afficher les resultats dans l'ordre : VERT puis JAUNE puis ROUGE
+            for block in results["green"]:
+                self.root.after(0, lambda b=block: self._log(self.log_persist, b, "green"))
+            for block in results["yellow"]:
+                self.root.after(0, lambda b=block: self._log(self.log_persist, b, "yellow"))
+            for block in results["red"]:
+                self.root.after(0, lambda b=block: self._log(self.log_persist, b, "red"))
 
             if total == 0:
                 self.root.after(0, lambda: self._log(
@@ -4301,7 +4313,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "9.4"
+CURRENT_VERSION = "9.5"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
