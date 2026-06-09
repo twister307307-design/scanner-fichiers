@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v9.0 - Interface Graphique
+Scanner de Fichiers Avancé v9.1 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v9.0 :
+Nouveautés v9.1 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -748,7 +748,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v9.0")
+        self.root.title("Scanner de Fichiers Avancé v9.1")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1262,7 +1262,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v9.0",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v9.1",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1543,9 +1543,6 @@ class ScannerApp:
         self.btn_history = self._btn(left, "🕓  Historique scans", self._show_history, self.DIMFG)
         self.btn_history.pack(fill=tk.X)
         Tooltip(self.btn_history, "Affiche les 20 derniers scans")
-        self.btn_procscan = self._btn(left, "⚙  Scanner les processus", self._scan_processes, self.PURPLE)
-        self.btn_procscan.pack(fill=tk.X, pady=(3, 0))
-        Tooltip(self.btn_procscan, "Analyse les processus en cours + signatures numériques")
         self.btn_persist = self._btn(left, "🚀  Scanner le démarrage", self._scan_persistence, "#e91e63")
         self.btn_persist.pack(fill=tk.X, pady=(3, 0))
         Tooltip(self.btn_persist, "Détecte les programmes lancés au démarrage de Windows")
@@ -1586,7 +1583,6 @@ class ScannerApp:
         self.log_errors    = self._log_tab(notebook, "🟠 Chiffrés")
         self.log_dblext    = self._log_tab(notebook, "🔺 Anomalies")
         self.log_access_errors = self._log_tab(notebook, "🟡 Erreurs accès")
-        self.log_procs     = self._log_tab(notebook, "⚙ Processus")
         self.log_persist   = self._log_tab(notebook, "🚀 Démarrage")
         self.tab_stats     = self._build_stats_tab(notebook)
 
@@ -2784,111 +2780,6 @@ Lien documentation API :
             self.pause_event.set()
             self.btn_pause.config(text="▶  REPRENDRE")
             self._set_status("⏸ Scan en pause", self.YELLOW)
-
-    def _scan_processes(self):
-        """Analyse les processus en cours d'execution + signatures numeriques.
-        Utilise les commandes natives Windows (pas besoin de psutil)."""
-        if platform.system() != "Windows" and not HAS_PSUTIL:
-            messagebox.showinfo("Windows uniquement",
-                "L'analyse des processus n'est disponible que sous Windows.")
-            return
-
-        self.log_procs.config(state=tk.NORMAL)
-        self.log_procs.delete("1.0", tk.END)
-        self.log_procs.config(state=tk.DISABLED)
-        self.btn_procscan.config(state=tk.DISABLED, text="⏳ Analyse...")
-        self._set_status("Analyse des processus en cours...", self.PURPLE)
-
-        def _get_processes():
-            """Retourne une liste de (pid, name, exe) via methode native ou psutil."""
-            procs = []
-            if HAS_PSUTIL:
-                for p in psutil.process_iter(["pid", "name", "exe"]):
-                    try:
-                        procs.append((p.info.get("pid", "?"),
-                                      p.info.get("name", "?"),
-                                      p.info.get("exe")))
-                    except Exception:
-                        continue
-                return procs
-            # Methode native Windows : PowerShell Get-Process
-            try:
-                import subprocess
-                ps = ("Get-Process | Where-Object {$_.Path} | "
-                      "Select-Object Id,ProcessName,Path | "
-                      "ForEach-Object { \"$($_.Id)|$($_.ProcessName)|$($_.Path)\" }")
-                r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                                   capture_output=True, timeout=20,
-                                   creationflags=0x08000000)
-                out = r.stdout.decode(errors="replace")
-                for line in out.splitlines():
-                    parts = line.strip().split("|", 2)
-                    if len(parts) == 3:
-                        procs.append((parts[0], parts[1], parts[2]))
-            except Exception:
-                pass
-            return procs
-
-        def _worker():
-            suspicious = []
-            total = 0
-            self._log(self.log_procs, "  ═══ ANALYSE DES PROCESSUS EN COURS ═══\n", "cyan")
-            risky_dirs = ["temp", "appdata\\local\\temp", "downloads",
-                          "\\users\\public", "\\programdata\\", "recycle"]
-
-            for pid, name, exe in _get_processes():
-                try:
-                    if not exe or not os.path.exists(exe):
-                        continue
-                    total += 1
-                    exe_low = exe.lower()
-                    reasons = []
-                    for rd in risky_dirs:
-                        if rd in exe_low:
-                            reasons.append(f"emplacement suspect ({rd})")
-                            break
-                    dbl, dbl_r = is_double_extension(exe)
-                    if dbl:
-                        reasons.append(dbl_r)
-                    for pat in SUSPICIOUS_NAME_PATTERNS:
-                        if pat in str(name).lower():
-                            reasons.append(f"nom suspect ({pat})")
-                            break
-                    if reasons:
-                        suspicious.append((pid, name, exe, reasons))
-                except Exception:
-                    continue
-
-            if suspicious:
-                self.root.after(0, lambda: self._log(
-                    self.log_procs,
-                    f"\n  ⚠ {len(suspicious)} processus suspect(s) sur {total} analyses :\n", "red"))
-                for pid, name, exe, reasons in suspicious:
-                    sig_status, signer = check_signature_windows(exe)
-                    sig_txt = {
-                        "valid":    f"✓ signé ({signer})",
-                        "invalid":  "✗ signature INVALIDE",
-                        "unsigned": "⚠ NON signé",
-                        "unknown":  "? signature inconnue",
-                    }.get(sig_status, "?")
-                    sig_color = "green" if sig_status == "valid" else "red"
-                    block = (f"\n  ⚙ {name}  (PID {pid})\n"
-                             f"     {exe}\n"
-                             f"     Raisons : {', '.join(reasons)}\n"
-                             f"     Signature : {sig_txt}")
-                    self.root.after(0, lambda b=block, c=sig_color: self._log(self.log_procs, b, c))
-            else:
-                self.root.after(0, lambda: self._log(
-                    self.log_procs,
-                    f"\n  ✓ Aucun processus suspect detecte ({total} processus analyses).", "green"))
-
-            self.root.after(0, lambda: [
-                self.btn_procscan.config(state=tk.NORMAL, text="⚙  Scanner les processus"),
-                self._set_status(f"Analyse processus terminee — {len(suspicious)} suspect(s)",
-                                 self.RED if suspicious else self.GREEN),
-            ])
-
-        threading.Thread(target=_worker, daemon=True).start()
 
     def _check_vt_file(self, filepath, api_key):
         """Calcule le MD5 d'un fichier et interroge VirusTotal.
@@ -4356,7 +4247,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "9.0"
+CURRENT_VERSION = "9.1"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
