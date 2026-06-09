@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v8.6 - Interface Graphique
+Scanner de Fichiers Avancé v8.8 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v8.6 :
+Nouveautés v8.8 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -748,7 +748,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v8.6")
+        self.root.title("Scanner de Fichiers Avancé v8.8")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1262,7 +1262,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v8.6",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v8.8",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1546,6 +1546,9 @@ class ScannerApp:
         self.btn_procscan = self._btn(left, "⚙  Scanner les processus", self._scan_processes, self.PURPLE)
         self.btn_procscan.pack(fill=tk.X, pady=(3, 0))
         Tooltip(self.btn_procscan, "Analyse les processus en cours + signatures numériques")
+        self.btn_persist = self._btn(left, "🚀  Scanner le démarrage", self._scan_persistence, "#e91e63")
+        self.btn_persist.pack(fill=tk.X, pady=(3, 0))
+        Tooltip(self.btn_persist, "Détecte les programmes lancés au démarrage de Windows")
 
         # ── Panel droit ──
         right = tk.Frame(body, bg=self.BG)
@@ -1584,6 +1587,7 @@ class ScannerApp:
         self.log_dblext    = self._log_tab(notebook, "🔺 Anomalies")
         self.log_access_errors = self._log_tab(notebook, "🟡 Erreurs accès")
         self.log_procs     = self._log_tab(notebook, "⚙ Processus")
+        self.log_persist   = self._log_tab(notebook, "🚀 Démarrage")
         self.tab_stats     = self._build_stats_tab(notebook)
 
         # Compteurs sous-catégories indispo
@@ -2378,18 +2382,20 @@ Lien documentation API :
         # Récupérer la ligne cliquée
         idx   = widget.index(f"@{event.x},{event.y}")
         line  = int(str(idx).split(".")[0])
-        # Chercher un chemin dans les 3 lignes autour
+        # Chercher un chemin dans les lignes autour (detection elargie)
         path  = None
-        for dl in range(-2, 3):
+        for dl in range(-3, 4):
             ln = line + dl
             if ln < 1:
                 continue
             try:
                 content = widget.get(f"{ln}.0", f"{ln}.end").strip()
-                # Détecter chemin Windows ou Unix
-                if (len(content) > 3 and
-                    (content[1:3] in (":\\", ":/") or content.startswith("/"))):
-                    path = content.lstrip("▶✓✗ ")
+                # Nettoyer les prefixes (icones, puces, marqueurs)
+                cleaned = content.lstrip("▶✓✗🔐🔺📏👁‍🗨⚠⚙🚀 \t")
+                # Détecter chemin Windows (X:\...) ou Unix (/...)
+                if (len(cleaned) > 3 and
+                    (cleaned[1:3] in (":\\", ":/") or cleaned.startswith("/"))):
+                    path = cleaned
                     break
             except Exception:
                 pass
@@ -2399,12 +2405,19 @@ Lien documentation API :
                        font=("Consolas", 8), borderwidth=0, relief=tk.FLAT)
 
         if path and os.path.exists(path):
-            menu.add_command(label="📂  Ouvrir le fichier",
+            menu.add_command(label="📂  Ouvrir l'emplacement (sélectionner)",
+                             command=lambda: self._open_in_explorer(path))
+            menu.add_command(label="▶  Ouvrir le fichier",
                              command=lambda: self._open_path(path))
             menu.add_command(label="📁  Ouvrir le dossier parent",
                              command=lambda: self._open_parent(path))
             menu.add_command(label="📋  Copier le chemin",
                              command=lambda: self._copy_to_clipboard(path))
+            menu.add_separator()
+            menu.add_command(label="🗑  Déplacer vers la corbeille",
+                             command=lambda: self._trash_path(path))
+            menu.add_command(label="❌  Supprimer définitivement",
+                             command=lambda: self._delete_path_permanent(path))
             menu.add_separator()
         menu.add_command(label="📋  Tout copier",
                          command=lambda: self._copy_to_clipboard(
@@ -2413,6 +2426,36 @@ Lien documentation API :
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def _trash_path(self, path):
+        """Deplace un fichier vers la corbeille (depuis n'importe quel onglet)."""
+        try:
+            try:
+                from send2trash import send2trash
+                send2trash(path)
+            except ImportError:
+                # Fallback : suppression simple avec confirmation
+                if not messagebox.askyesno("Corbeille indisponible",
+                        "Le module send2trash n'est pas installé.\n"
+                        "(pip install send2trash)\n\n"
+                        "Supprimer définitivement à la place ?"):
+                    return
+                os.remove(path)
+            self._set_status(f"🗑 Supprimé : {os.path.basename(path)}", self.YELLOW)
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de supprimer :\n{e}")
+
+    def _delete_path_permanent(self, path):
+        """Supprime definitivement un fichier (depuis n'importe quel onglet)."""
+        if not messagebox.askyesno("❌  Supprimer définitivement",
+                f"⚠ Suppression DÉFINITIVE (pas de corbeille) !\n\n"
+                f"{path}\n\nContinuer ?", icon="warning"):
+            return
+        try:
+            os.remove(path)
+            self._set_status(f"❌ Supprimé définitivement : {os.path.basename(path)}", self.RED)
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de supprimer :\n{e}")
 
     def _open_path(self, path):
         try:
@@ -2832,6 +2875,141 @@ Lien documentation API :
                 self.btn_procscan.config(state=tk.NORMAL, text="⚙  Scanner les processus"),
                 self._set_status(f"Analyse processus terminee — {len(suspicious)} suspect(s)",
                                  self.RED if suspicious else self.GREEN),
+            ])
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _scan_persistence(self):
+        """Detecte les programmes lances au demarrage de Windows (persistance)."""
+        if platform.system() != "Windows":
+            messagebox.showinfo("Windows uniquement",
+                "Le scan du démarrage n'est disponible que sous Windows.")
+            return
+
+        self.log_persist.config(state=tk.NORMAL)
+        self.log_persist.delete("1.0", tk.END)
+        self.log_persist.config(state=tk.DISABLED)
+        self.btn_persist.config(state=tk.DISABLED, text="⏳ Analyse...")
+        self._set_status("Analyse du démarrage Windows...", "#e91e63")
+
+        def _worker():
+            import winreg
+            self._log(self.log_persist, "  ═══ PROGRAMMES AU DÉMARRAGE DE WINDOWS ═══\n", "cyan")
+            total = 0
+            suspect = 0
+
+            # Emplacements suspects pour un programme de demarrage
+            risky = ["temp", "appdata\\local\\temp", "downloads", "\\public\\",
+                     "programdata\\", "\\roaming\\", "recycle"]
+
+            def analyze_entry(name, command, source):
+                nonlocal total, suspect
+                total += 1
+                cmd_low = command.lower()
+                reasons = []
+                # Extraire le chemin de l'exe de la commande
+                exe_path = command.strip('"').split('"')[0] if '"' in command else command.split()[0] if command.split() else command
+                for rd in risky:
+                    if rd in cmd_low:
+                        reasons.append(f"emplacement suspect ({rd})")
+                        break
+                # Double extension
+                dbl, dbl_r = is_double_extension(exe_path)
+                if dbl:
+                    reasons.append(dbl_r)
+                # Nom suspect
+                for pat in SUSPICIOUS_NAME_PATTERNS:
+                    if pat in name.lower() or pat in cmd_low:
+                        reasons.append(f"nom suspect ({pat})")
+                        break
+                # Script au demarrage (souvent suspect)
+                for ext in (".vbs", ".js", ".bat", ".cmd", ".ps1", ".hta"):
+                    if ext in cmd_low:
+                        reasons.append(f"script au démarrage ({ext})")
+                        break
+
+                if reasons:
+                    suspect += 1
+                    block = (f"\n  ⚠ {name}  [{source}]\n"
+                             f"     {command}\n"
+                             f"     Raisons : {', '.join(reasons)}")
+                    self.root.after(0, lambda b=block: self._log(self.log_persist, b, "red"))
+                else:
+                    block = f"\n  ✓ {name}  [{source}]\n     {command}"
+                    self.root.after(0, lambda b=block: self._log(self.log_persist, b, "green"))
+
+            # 1. Cles Run du registre (HKCU et HKLM)
+            run_keys = [
+                (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", "HKCU\\Run"),
+                (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", "HKLM\\Run"),
+                (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\RunOnce", "HKCU\\RunOnce"),
+                (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\RunOnce", "HKLM\\RunOnce"),
+            ]
+            for hive, path, label in run_keys:
+                try:
+                    key = winreg.OpenKey(hive, path)
+                    i = 0
+                    while True:
+                        try:
+                            name, value, _ = winreg.EnumValue(key, i)
+                            analyze_entry(name, str(value), label)
+                            i += 1
+                        except OSError:
+                            break
+                    winreg.CloseKey(key)
+                except FileNotFoundError:
+                    pass
+                except Exception:
+                    pass
+
+            # 2. Dossier Demarrage
+            startup = os.path.join(os.environ.get("APPDATA", ""),
+                                   r"Microsoft\Windows\Start Menu\Programs\Startup")
+            if os.path.isdir(startup):
+                for f in os.listdir(startup):
+                    if f.lower() not in ("desktop.ini",):
+                        analyze_entry(f, os.path.join(startup, f), "Dossier Démarrage")
+
+            # 3. Taches planifiees suspectes (emplacement risque uniquement)
+            try:
+                import subprocess
+                r = subprocess.run(["schtasks", "/query", "/fo", "csv", "/v"],
+                                   capture_output=True, timeout=15,
+                                   creationflags=0x08000000)
+                out = r.stdout.decode(errors="replace")
+                import csv as _csv, io as _io
+                reader = _csv.reader(_io.StringIO(out))
+                header = None
+                for row in reader:
+                    if not row:
+                        continue
+                    if header is None:
+                        header = row
+                        continue
+                    try:
+                        d = dict(zip(header, row))
+                        task_name = d.get("TaskName", "")
+                        action = d.get("Task To Run", "") or d.get("Tâche à exécuter", "")
+                        if not action or action in ("N/A", "COM handler"):
+                            continue
+                        act_low = action.lower()
+                        # Ne signaler que si emplacement vraiment suspect
+                        if any(rd in act_low for rd in risky):
+                            analyze_entry(task_name.strip("\\") or "?", action, "Tâche planifiée")
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+            self.root.after(0, lambda: self._log(
+                self.log_persist,
+                f"\n\n  ─────────────────────────────\n"
+                f"  {total} entrée(s) au démarrage, {suspect} suspecte(s).",
+                "red" if suspect else "green"))
+            self.root.after(0, lambda: [
+                self.btn_persist.config(state=tk.NORMAL, text="🚀  Scanner le démarrage"),
+                self._set_status(f"Scan démarrage terminé — {suspect} suspect(s)",
+                                 self.RED if suspect else self.GREEN),
             ])
 
         threading.Thread(target=_worker, daemon=True).start()
@@ -4136,7 +4314,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "8.6"
+CURRENT_VERSION = "8.8"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
