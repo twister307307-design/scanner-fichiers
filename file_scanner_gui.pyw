@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v10.1 - Interface Graphique
+Scanner de Fichiers Avancé v10.2 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v10.1 :
+Nouveautés v10.2 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -34,7 +34,7 @@ import hashlib
 import time
 import stat
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import platform
 import shutil
 import json
@@ -678,11 +678,6 @@ def make_progress_bar(pct, bar_w=50):
     return f"[{'█' * filled}{'░' * empty}]"
 
 
-# ─── Notification Windows ─────────────────────────────────────────────────────
-
-def win_toast(title, msg):
-    pass  # plus utilisé
-
 def play_done_sound():
     """Joue une mélodie cristalline douce en fin de scan (arpège ascendant + résolution)."""
     try:
@@ -746,7 +741,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v10.1")
+        self.root.title("Scanner de Fichiers Avancé v10.2")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1261,7 +1256,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.1",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.2",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1584,8 +1579,6 @@ class ScannerApp:
         self.log_access_errors = self._log_tab(notebook, "🟡 Erreurs accès", section_title="ERREURS D'ACCÈS")
         self.log_persist, self._persist_frame = self._log_tab(notebook, "🚀 Démarrage", return_frame=True, section_title="PROGRAMMES AU DÉMARRAGE")
         self.tab_stats     = self._build_stats_tab(notebook)
-
-        # Compteurs sous-catégories indispo
 
         # ── Barre de recherche globale ──
         search_frame = tk.Frame(right, bg=self.BG2, pady=3)
@@ -2640,7 +2633,6 @@ Lien documentation API :
             win.after(0, lambda: lbl_err.config(text="\u23f3  Vérification de la clé en cours...",
                                                 fg=self.ACCENT))
             try:
-                import urllib.request, urllib.error, json as _json
                 req = urllib.request.Request(
                     "https://www.virustotal.com/api/v3/files/00000000000000000000000000000000",
                     headers={"x-apikey": val})
@@ -4171,7 +4163,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "10.1"
+CURRENT_VERSION = "10.2"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
