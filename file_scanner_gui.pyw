@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v10.0 - Interface Graphique
+Scanner de Fichiers Avancé v10.1 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v10.0 :
+Nouveautés v10.1 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -21,7 +21,6 @@ Nouveautés v4.0 :
   - Filtre par taille minimale/maximale de fichier
   - Vérification VirusTotal API (hash MD5)
   - Score de dangerosité (1-10) par fichier suspect
-  - Quarantaine : déplacer les suspects dans un dossier isolé
   - Détection fichiers chiffrés suspects (ransomware)
   - Graphique camembert par type de fichier
   - Recherche/filtre dans les onglets
@@ -78,7 +77,6 @@ def load_config():
         # v3.0
         "virustotal_api_key": "",
         "var_virustotal": False,
-        "var_quarantine": False,
         "var_detect_encrypted": True,
         "schedule_hours": 0,
         "var_schedule_enabled": False,
@@ -748,7 +746,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v10.0")
+        self.root.title("Scanner de Fichiers Avancé v10.1")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1263,7 +1261,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.0",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.1",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1346,7 +1344,6 @@ class ScannerApp:
         self.var_summary        = tk.BooleanVar(value=self.cfg.get("show_summary", True))
         # v3.0
         self.var_virustotal     = tk.BooleanVar(value=self.cfg.get("var_virustotal", False))
-        self.var_quarantine     = tk.BooleanVar(value=self.cfg.get("var_quarantine", False))
         self.var_detect_encrypted = tk.BooleanVar(value=self.cfg.get("var_detect_encrypted", True))
         self.var_schedule_enabled = tk.BooleanVar(value=self.cfg.get("var_schedule_enabled", False))
         self.var_strict_dupes   = tk.BooleanVar(value=True)  # toujours activé (fixé en dur)
@@ -1578,8 +1575,7 @@ class ScannerApp:
         self.log_all       = self._log_tab(notebook, "📋 Journal")
         self.log_clean, self.tree_clean = self._clean_tab(notebook)
         self.log_corrupted = self._log_tab(notebook, "🔴 Corrompus", section_title="FICHIERS CORROMPUS")
-        self.log_suspects, self.btn_open_suspects, self.btn_quarantine = \
-            self._suspects_tab(notebook)
+        self.log_suspects, self.btn_open_suspects = self._suspects_tab(notebook)
         self.log_dupes, self.btn_del_dupes = self._log_tab_with_action(
             notebook, "🟣 Doublons", "🗑  Supprimer les doublons", self._manual_delete_dupes, self.PURPLE,
             section_title="DOUBLONS DÉTECTÉS")
@@ -2061,7 +2057,7 @@ Lien documentation API :
         return txt, btn
 
     def _suspects_tab(self, notebook):
-        """Onglet Suspects avec Treeview triable, boutons Accéder + Quarantaine."""
+        """Onglet Suspects avec Treeview triable."""
         frame = tk.Frame(notebook, bg=self.BG)
         notebook.add(frame, text="🦠 Suspects")
 
@@ -2075,14 +2071,6 @@ Lien documentation API :
                              cursor="hand2", pady=3, padx=10, relief=tk.FLAT,
                              state=tk.DISABLED)
         btn_open.pack(side=tk.LEFT, padx=8)
-
-        btn_quar = tk.Button(toolbar, text="🔒 Quarantaine",
-                             command=self._quarantine_suspects,
-                             bg=self.BG3, fg=self.RED, activebackground=self.BG,
-                             font=("Consolas", 8, "bold"), borderwidth=0,
-                             cursor="hand2", pady=3, padx=10, relief=tk.FLAT,
-                             state=tk.DISABLED)
-        btn_quar.pack(side=tk.LEFT, padx=4)
 
         # Treeview triable
         cols = ("score", "chemin", "raison", "vt")
@@ -2139,7 +2127,7 @@ Lien documentation API :
         self.tree_suspects.bind("<Double-1>", self._on_suspect_double_click)
         self.tree_suspects.bind("<Button-3>", self._on_suspect_right_click)
 
-        return frame, btn_open, btn_quar
+        return frame, btn_open
 
     def _sort_tree(self, tree, col, reverse):
         data = [(tree.set(k, col), k) for k in tree.get_children("")]
@@ -2760,7 +2748,6 @@ Lien documentation API :
         self.btn_export_csv.config(state=tk.DISABLED)
         self.btn_del_dupes.config(state=tk.DISABLED)
         self.btn_open_suspects.config(state=tk.DISABLED)
-        self.btn_quarantine.config(state=tk.DISABLED)
         for item in self.tree_suspects.get_children():
             self.tree_suspects.delete(item)
         self._set_status("Comptage en cours…", self.ACCENT)
@@ -2776,7 +2763,6 @@ Lien documentation API :
             "sound_enabled":      self.var_sound.get(),
             "show_summary":       self.var_summary.get(),
             "var_virustotal":     self.var_virustotal.get(),
-            "var_quarantine":     self.var_quarantine.get(),
             "var_detect_encrypted": self.var_detect_encrypted.get(),
             "var_schedule_enabled": self.var_schedule_enabled.get(),
             "virustotal_api_key": self.vt_key_var.get(),
@@ -3600,7 +3586,6 @@ Lien documentation API :
             self._terminal_freeze_bars()
             self._set_status("⚠ Scan interrompu.", self.YELLOW)
             self._log(self.log_all, "\n⚠  Scan interrompu par l'utilisateur.", "yellow")
-            self.btn_quarantine.config(state=tk.DISABLED)
             return
         r      = self.results
         stats  = r["stats"]
@@ -3682,7 +3667,6 @@ Lien documentation API :
             self.btn_del_dupes.config(state=tk.NORMAL)
         if r.get("suspects"):
             self.btn_open_suspects.config(state=tk.NORMAL)
-            self.btn_quarantine.config(state=tk.NORMAL)
 
         self.btn_export_csv.config(state=tk.NORMAL)
 
@@ -3989,167 +3973,6 @@ Lien documentation API :
         self._log(self.log_all,
                   f"📂 {count} dossier(s) suspect(s) ouverts dans l'explorateur.", "orange")
 
-    def _quarantine_suspects(self):
-        """Déplace les fichiers suspects dans QUARANTAINE_SCANNER sur le Bureau."""
-        suspects = self.results.get("suspects", [])
-        if not suspects:
-            messagebox.showinfo("Quarantaine", "Aucun fichier suspect.")
-            return
-        total = len(suspects)
-        dest_dir = os.path.join(get_desktop(), "QUARANTAINE_SCANNER")
-        ok = messagebox.askyesno(
-            "⚠️  Quarantaine — Confirmation",
-            f"{total} fichier(s) suspect(s) vont être DÉPLACÉS.\n\n"
-            f"Destination :\n{dest_dir}\n\n"
-            "⚠️  Les fichiers disparaissent de leur emplacement d'origine.\n"
-            "Cette action est difficile à annuler.\n\nContinuer ?",
-            icon="warning")
-        if not ok:
-            return
-        os.makedirs(dest_dir, exist_ok=True)
-        moved = 0
-        failed_paths = []
-        for path, reason in suspects:
-            try:
-                if not os.path.exists(path):
-                    continue
-                basename = os.path.basename(path)
-                dest = os.path.join(dest_dir, basename)
-                n = 1
-                while os.path.exists(dest):
-                    name_p, ext_p = os.path.splitext(basename)
-                    dest = os.path.join(dest_dir, f"{name_p}_{n}{ext_p}")
-                    n += 1
-                shutil.move(path, dest)
-                moved += 1
-            except Exception:
-                failed_paths.append(path)
-
-        if failed_paths and platform.system() == "Windows":
-            # Proposer une relance en admin via UAC pour les fichiers qui ont échoué
-            retry = messagebox.askyesno(
-                "Droits insuffisants",
-                f"{len(failed_paths)} fichier(s) n'ont pas pu être déplacés\n"
-                "(droits insuffisants).\n\n"
-                "Relancer la quarantaine en tant qu'Administrateur ?",
-                icon="warning")
-            if retry:
-                import ctypes
-                # Construire la liste des chemins à déplacer dans un fichier temp
-                tmp_list = os.path.join(os.path.expanduser("~"), "_quar_list.txt")
-                with open(tmp_list, "w", encoding="utf-8") as f:
-                    for p in failed_paths:
-                        f.write(p + "\n")
-                # Script PowerShell inline qui lit la liste et déplace en admin
-                ps_cmd = (
-                    f'$dest="{dest_dir}"; '
-                    f'Get-Content "{tmp_list}" | ForEach-Object {{ '
-                    f'  if (Test-Path $_) {{ Move-Item -Path $_ -Destination $dest -Force }} '
-                    f'}}; '
-                    f'Remove-Item "{tmp_list}" -Force'
-                )
-                ctypes.windll.shell32.ShellExecuteW(
-                    None, "runas", "powershell.exe",
-                    f'-NoProfile -WindowStyle Hidden -Command "{ps_cmd}"',
-                    None, 1)
-                messagebox.showinfo("Quarantaine Admin",
-                    "La fenêtre UAC va s'ouvrir.\n"
-                    "Acceptez pour terminer la quarantaine en admin.")
-
-        msg = f"✓ {moved} fichier(s) mis en quarantaine → {dest_dir}"
-        if failed_paths:
-            msg += f"\n✗ {len(failed_paths)} échec(s)"
-        messagebox.showinfo("Quarantaine terminée", msg)
-        self._log(self.log_all, f"\n🔒 Quarantaine : {moved} fichier(s) → {dest_dir}", "red")
-        self.btn_quarantine.config(state=tk.DISABLED)
-
-
-        to_delete = []
-        for paths in groups.values():
-            to_delete.extend(paths[1:])
-        total = len(to_delete)
-        if total == 0:
-            return
-
-        win = tk.Toplevel(self.root)
-        win.title("Suppression des doublons")
-        win.geometry("540x230")
-        win.configure(bg=self.BG)
-        win.resizable(False, False)
-        win.grab_set()
-
-        tk.Label(win, text="🗑  SUPPRESSION DES DOUBLONS",
-                 font=("Consolas", 11, "bold"), fg=self.RED, bg=self.BG).pack(pady=(16, 4))
-        lbl_file = tk.Label(win, text="", font=("Consolas", 7), fg=self.DIMFG, bg=self.BG,
-                            wraplength=500, anchor="w")
-        lbl_file.pack(fill=tk.X, padx=16)
-
-        bar_frame = tk.Frame(win, bg=self.BG)
-        bar_frame.pack(fill=tk.X, padx=16, pady=6)
-        canvas = tk.Canvas(bar_frame, height=18, bg=self.BG3, highlightthickness=0)
-        canvas.pack(fill=tk.X)
-        fill_rect = canvas.create_rectangle(0, 0, 0, 18, fill=self.RED, outline="")
-
-        lbl_stats = tk.Label(win, text=f"0 / {total:,}   |   ETA : --   |   0 f/s",
-                             font=("Consolas", 8), fg=self.FG, bg=self.BG)
-        lbl_stats.pack()
-        lbl_freed = tk.Label(win, text="Libéré : 0 o", font=("Consolas", 8), fg=self.GREEN, bg=self.BG)
-        lbl_freed.pack(pady=2)
-
-        del_q = queue.Queue()
-
-        def worker():
-            deleted = freed = failed = 0
-            t0 = time.time()
-            for i, dup in enumerate(to_delete):
-                try:
-                    sz = os.path.getsize(dup)
-                    os.remove(dup)
-                    deleted += 1
-                    freed += sz
-                except Exception:
-                    failed += 1
-                elapsed = time.time() - t0
-                speed   = (i + 1) / elapsed if elapsed > 0 else 0
-                remaining = (total - i - 1) / speed if speed > 0 else 0
-                del_q.put({"i": i+1, "total": total, "speed": speed,
-                           "eta": remaining, "freed": freed, "file": dup, "done": False})
-            del_q.put({"done": True, "deleted": deleted, "freed": freed, "failed": failed})
-
-        def poll():
-            try:
-                while True:
-                    msg = del_q.get_nowait()
-                    if msg["done"]:
-                        canvas.coords(fill_rect, 0, 0, canvas.winfo_width(), 18)
-                        lbl_stats.config(text=f"{msg['deleted']:,} supprimé(s)  |  {msg['failed']} échec(s)")
-                        lbl_freed.config(text=f"Libéré : {format_size(msg['freed'])}")
-                        lbl_file.config(text="✓ Suppression terminée !")
-                        self._log(self.log_all,
-                                  f"✓ {msg['deleted']:,} doublon(s) supprimé(s) — "
-                                  f"{format_size(msg['freed'])} libéré(s)", "purple")
-                        self._card_set(self.card_dupes, "0")
-                        win.after(1800, win.destroy)
-                        return
-                    pct = msg["i"] / msg["total"]
-                    w   = canvas.winfo_width()
-                    canvas.coords(fill_rect, 0, 0, int(w * pct), 18)
-                    short = msg["file"]
-                    if len(short) > 68:
-                        short = "…" + short[-67:]
-                    lbl_file.config(text=short)
-                    lbl_stats.config(
-                        text=f"{msg['i']:,} / {msg['total']:,}   |   "
-                             f"ETA : {format_duration(msg['eta'])}   |   "
-                             f"{msg['speed']:.0f} f/s")
-                    lbl_freed.config(text=f"Libéré : {format_size(msg['freed'])}")
-            except queue.Empty:
-                pass
-            win.after(80, poll)
-
-        threading.Thread(target=worker, daemon=True).start()
-        win.after(80, poll)
-
     # ── Export CSV ─────────────────────────────────────────────────────────────
 
     def _export_csv(self):
@@ -4348,7 +4171,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "10.0"
+CURRENT_VERSION = "10.1"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
