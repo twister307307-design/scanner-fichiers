@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v8.8 - Interface Graphique
+Scanner de Fichiers Avancé v8.9 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v8.8 :
+Nouveautés v8.9 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
 Nouveautés v4.6 :
@@ -748,7 +748,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v8.8")
+        self.root.title("Scanner de Fichiers Avancé v8.9")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1262,7 +1262,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v8.8",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v8.9",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  Quarantaine  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1389,7 +1389,7 @@ class ScannerApp:
             # ── Rapports / divers ──
             ("Sauvegarder rapport .txt",      self.var_save_report,    self.GREEN,  "Rapport complet dans votre dossier utilisateur"),
             ("🔔 Son en fin de scan",         self.var_sound,          self.ACCENT, "Mélodie cristalline quand le scan est terminé"),
-            ("📋 Résumé en fin de scan",      self.var_summary,        self.GREEN,  "Affiche une popup récapitulative à la fin"),
+            ("📋 Résumé en fin de scan",      self.var_summary,        self.GREEN,  "Affiche un récapitulatif dans le journal à la fin"),
         ]:
             row = tk.Frame(self._opt_frame, bg=self.BG)
             row.pack(fill=tk.X, pady=2)
@@ -3607,6 +3607,8 @@ Lien documentation API :
             self.card_score._val_label.config(fg=risk_color)
         except Exception:
             pass
+        # Faire correspondre la grosse barre du haut au score de securite
+        self._set_progress_score(safety, risk_color)
 
 
         # Mettre à jour le canvas stats final
@@ -3658,72 +3660,40 @@ Lien documentation API :
             "report":     self.report_path or "",
         })
 
-        # ── Popup resume de fin de scan ──
+        # ── Resume de fin de scan (dans le Journal, pas en popup) ──
         if not stopped and self.var_summary.get():
-            self._show_scan_summary(stats, safety, risk_label, risk_color, elapsed)
+            self._write_scan_summary(stats, safety, risk_label, risk_color, elapsed)
 
-    def _show_scan_summary(self, stats, safety, risk_label, risk_color, elapsed):
-        """Affiche une popup recapitulative en fin de scan."""
+    def _write_scan_summary(self, stats, safety, risk_label, risk_color, elapsed):
+        """Ecrit un recapitulatif dans l'onglet Journal."""
         total_threats = (stats["corrupted"] + stats.get("suspects", 0)
                          + stats.get("encrypted", 0) + stats.get("dblext", 0)
                          + stats.get("hidden", 0) + stats.get("abnormal", 0))
+        anomalies = stats.get('dblext', 0) + stats.get('hidden', 0) + stats.get('abnormal', 0)
 
-        win = tk.Toplevel(self.root)
-        win.title("Résumé du scan")
-        win.resizable(False, False)
-        win.configure(bg=self.BG)
-        win.grab_set()
-        self.root.update_idletasks()
-        px = self.root.winfo_x() + self.root.winfo_width()  // 2
-        py = self.root.winfo_y() + self.root.winfo_height() // 2
-        w, h = 420, 380
-        win.geometry(f"{w}x{h}+{px - w//2}+{py - h//2}")
-
-        # Score en gros avec couleur
-        tk.Label(win, text=f"{safety}/100", font=("Consolas", 32, "bold"),
-                 fg=risk_color, bg=self.BG).pack(pady=(20, 0))
-        tk.Label(win, text=f"SÉCURITÉ : {risk_label}", font=("Consolas", 11, "bold"),
-                 fg=risk_color, bg=self.BG).pack()
-
-        # Recommandation
         if safety >= 80:
-            reco = "✓ Votre système semble sain.\nAucune action urgente requise."
+            reco = "✓ Votre systeme semble sain. Aucune action urgente."
         elif safety >= 50:
-            reco = "⚠ Quelques éléments à surveiller.\nVérifiez les onglets Suspects et Anomalies."
+            reco = "⚠ Quelques elements a surveiller (onglets Suspects et Anomalies)."
         else:
-            reco = "🚨 Plusieurs menaces détectées !\nExaminez les fichiers signalés en priorité."
-        tk.Label(win, text=reco, font=("Consolas", 8), fg=self.FG, bg=self.BG,
-                 justify="center").pack(pady=(8, 12))
+            reco = "🚨 Plusieurs menaces detectees ! Examinez les fichiers signales."
 
-        # Stats détaillées
-        stats_frame = tk.Frame(win, bg=self.BG3, padx=16, pady=10)
-        stats_frame.pack(fill=tk.X, padx=20)
-        rows = [
-            ("📁 Fichiers scannés", f"{stats['scanned']:,}", self.ACCENT),
-            ("💾 Taille totale", format_size(stats['total_size']), self.FG),
-            ("🔴 Corrompus", str(stats['corrupted']), self.RED),
-            ("🛡 Suspects", str(stats.get('suspects', 0)), self.YELLOW),
-            ("🟣 Doublons", str(stats['duplicates']), self.PURPLE),
-            ("🔺 Anomalies", str(stats.get('dblext', 0) + stats.get('hidden', 0) + stats.get('abnormal', 0)), "#e91e63"),
-            ("⏱ Durée", format_duration(elapsed), self.DIMFG),
-        ]
-        for label, val, color in rows:
-            row = tk.Frame(stats_frame, bg=self.BG3)
-            row.pack(fill=tk.X, pady=1)
-            tk.Label(row, text=label, font=("Consolas", 8), fg=self.DIMFG,
-                     bg=self.BG3, anchor="w").pack(side=tk.LEFT)
-            tk.Label(row, text=val, font=("Consolas", 8, "bold"), fg=color,
-                     bg=self.BG3, anchor="e").pack(side=tk.RIGHT)
-
-        tk.Label(win, text=f"⚠ {total_threats} menace(s) potentielle(s) au total",
-                 font=("Consolas", 8, "bold"),
-                 fg=self.RED if total_threats else self.GREEN, bg=self.BG).pack(pady=(10, 4))
-
-        tk.Button(win, text="Fermer", font=("Consolas", 8, "bold"),
-                  bg=self.ACCENT, fg="#000", activebackground=self.BG2,
-                  borderwidth=0, padx=20, pady=5, cursor="hand2", relief=tk.FLAT,
-                  command=win.destroy).pack(pady=(4, 0))
-        win.bind("<Escape>", lambda e: win.destroy())
+        L = self.log_all
+        self._log(L, f"\n  {'═'*44}", "cyan")
+        self._log(L, "  ┃           RESUME DU SCAN                  ┃", "cyan")
+        self._log(L, f"  {'═'*44}", "cyan")
+        self._log(L, f"  📁 Fichiers scannes : {stats['scanned']:,}", "dim")
+        self._log(L, f"  💾 Taille totale    : {format_size(stats['total_size'])}", "dim")
+        self._log(L, f"  🔴 Corrompus        : {stats['corrupted']}", "red")
+        self._log(L, f"  🛡 Suspects         : {stats.get('suspects', 0)}", "yellow")
+        self._log(L, f"  🟣 Doublons         : {stats['duplicates']}", "purple")
+        self._log(L, f"  🔺 Anomalies        : {anomalies}", "red")
+        self._log(L, f"  ⏱ Duree            : {format_duration(elapsed)}", "dim")
+        self._log(L, f"  {'─'*44}", "cyan")
+        threat_color = "red" if total_threats else "green"
+        self._log(L, f"  ⚠ {total_threats} menace(s) potentielle(s) au total", threat_color)
+        self._log(L, f"  {reco}", "green" if safety >= 80 else ("yellow" if safety >= 50 else "red"))
+        self._log(L, f"  {'═'*44}\n", "cyan")
 
     # ── Terminal ───────────────────────────────────────────────────────────────
 
@@ -3807,10 +3777,19 @@ Lien documentation API :
     def _set_progress(self, pct):
         """Met a jour la barre de progression graphique (0-100)."""
         self._prog_pct = max(0, min(100, pct))
+        self._prog_mode = "scan"
+        self._prog_score_color = None
+        self._draw_progress_bar()
+
+    def _set_progress_score(self, score, color):
+        """Affiche le score de securite sur la barre du haut (couleur fixe)."""
+        self._prog_pct = max(0, min(100, score))
+        self._prog_mode = "score"
+        self._prog_score_color = color
         self._draw_progress_bar()
 
     def _draw_progress_bar(self):
-        """Dessine la barre coloree selon l'avancement (rouge->orange->vert)."""
+        """Dessine la barre coloree selon l'avancement OU le score de securite."""
         try:
             c = self._prog_canvas
             c.delete("all")
@@ -3820,19 +3799,25 @@ Lien documentation API :
                 return
             pct = self._prog_pct
             fill_w = int(w * pct / 100)
-            # Couleur selon avancement : rouge (debut) -> orange -> jaune -> vert (fin)
-            if pct < 33:
-                color = "#ff5252"
-            elif pct < 66:
-                color = "#ff9800"
-            elif pct < 95:
-                color = "#ffd740"
+            mode = getattr(self, "_prog_mode", "scan")
+            if mode == "score" and getattr(self, "_prog_score_color", None):
+                # Mode score de securite : couleur fixe (vert/orange/rouge)
+                color = self._prog_score_color
+                label = f"SECURITE : {pct}/100"
             else:
-                color = self.GREEN
+                # Mode scan : couleur selon avancement
+                if pct < 33:
+                    color = "#ff5252"
+                elif pct < 66:
+                    color = "#ff9800"
+                elif pct < 95:
+                    color = "#ffd740"
+                else:
+                    color = self.GREEN
+                label = f"{pct}%"
             if fill_w > 0:
                 c.create_rectangle(0, 0, fill_w, h, fill=color, outline="")
-            # Texte pourcentage centre
-            c.create_text(w // 2, h // 2, text=f"{pct}%",
+            c.create_text(w // 2, h // 2, text=label,
                           fill=self.FG, font=("Consolas", 8, "bold"))
         except Exception:
             pass
@@ -4314,7 +4299,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "8.8"
+CURRENT_VERSION = "8.9"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
