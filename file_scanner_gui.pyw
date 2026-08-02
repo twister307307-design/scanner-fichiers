@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v10.6 - Interface Graphique
+Scanner de Fichiers Avancé v10.8 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
+Nouveautés v10.8 :
+  - updater.bat : nettoyage complet des temporaires (exe compile, dist_upd, build_upd,
+    .spec, __pycache__), relance de secours si le remplacement echoue
+  - subprocess.Popen avec close_fds=True + sys.exit(0) pour liberer l'ancien .exe
+Nouveautés v10.7 :
+  - Securisation des scripts .bat generes (updater + desinstalleur) : helper bat_quote()
+    (guillemets + '%' doubles), lancement via subprocess.Popen en liste d'arguments,
+    encodage UTF-8 + chcp 65001, correction du chemin Python312
 Nouveautés v10.6 :
   - Fallback natif si psutil est absent (RAM via GlobalMemoryStatusEx / sysconf, coeurs via os.cpu_count)
   - Message de fin de nettoyage plus lisible : "✨ NETTOYAGE TERMINE : X.XX Go LIBERES !"
@@ -687,6 +695,20 @@ def check_virustotal(md5_hash, api_key):
         return False, 0, 0, ""
 
 
+def bat_quote(path):
+    """Protege un chemin pour l'insertion dans un fichier .bat.
+
+    json.dumps() n'est PAS adapte ici : il echappe les antislashs (C:\\\\Users)
+    et laisse passer le '%', qui est justement le seul caractere dangereux
+    dans un .bat (un dossier nomme "100%" ou "%TEMP%" serait interprete).
+    On double donc les '%' et on entoure de guillemets : espaces, &, ^, (, )
+    et ! sont neutralises tant qu'ils restent entre guillemets.
+    """
+    p = str(path).replace('"', '')      # un chemin Windows ne peut pas contenir de "
+    p = p.replace('%', '%%')            # %% = un % litteral dans un fichier .bat
+    return '"' + p + '"'
+
+
 def format_size(size_bytes):
     if size_bytes < 0:
         return "?"
@@ -813,7 +835,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v10.6")
+        self.root.title("Scanner de Fichiers Avancé v10.8")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1021,6 +1043,17 @@ class ScannerApp:
                     os.replace(tmp_pyw, new_pyw)
 
                     updater = os.path.join(exe_dir, "updater.bat")
+
+                    # Tous les chemins injectes dans le .bat passent par bat_quote()
+                    q_exe_dir  = bat_quote(exe_dir)
+                    q_current  = bat_quote(current)
+                    q_exe_name = bat_quote(os.path.basename(current))
+                    q_pyw      = bat_quote(new_pyw)
+                    q_dist     = bat_quote(os.path.join(exe_dir, "dist_upd"))
+                    q_build    = bat_quote(os.path.join(exe_dir, "build_upd"))
+                    q_new_exe  = bat_quote(os.path.join(exe_dir, "dist_upd", "ScannerFichiers.exe"))
+                    q_spec     = bat_quote(os.path.join(exe_dir, "ScannerFichiers.spec"))
+
                     # Chercher l'icone dans le dossier de l'exe ET le dossier parent
                     icon_arg = ""
                     parent_dir = os.path.dirname(exe_dir)
@@ -1028,12 +1061,14 @@ class ScannerApp:
                         for ic in ("plume.ico", "app.ico", "scanner.ico"):
                             ic_path = os.path.join(base, ic)
                             if os.path.exists(ic_path):
-                                icon_arg = '--icon \"' + ic_path + '\" '
+                                icon_arg = "--icon " + bat_quote(ic_path) + " "
                                 break
                         if icon_arg:
                             break
+
                     bat_lines = [
                         "@echo off",
+                        "chcp 65001 >nul",
                         "title Mise a jour ScannerFichiers",
                         "echo ========================================",
                         "echo   MISE A JOUR DE SCANNERFICHIERS",
@@ -1041,20 +1076,20 @@ class ScannerApp:
                         "echo.",
                         "echo   Fermeture de l'ancienne version...",
                         "timeout /t 3 /nobreak >nul",
-                        "taskkill /f /im \"" + os.path.basename(current) + "\" >nul 2>&1",
+                        "taskkill /f /im " + q_exe_name + " >nul 2>&1",
                         "timeout /t 2 /nobreak >nul",
-                        "cd /d \"" + exe_dir + "\"",
+                        "cd /d " + q_exe_dir,
                         "echo   Recherche de Python...",
                         "set \"PY=\"",
                         "python --version >nul 2>&1 && set \"PY=python\"",
                         "if not defined PY if exist \"%LocalAppData%\\Programs\\Python\\Python313\\python.exe\" set \"PY=%LocalAppData%\\Programs\\Python\\Python313\\python.exe\"",
-                        "if not defined PY if exist \"%LocalAppData%\\Programs\\Python\\Python312\\python.exe\" set \"PY=%LocalAppData%\\Programs\\Python\\Python311\\python.exe\"",
+                        "if not defined PY if exist \"%LocalAppData%\\Programs\\Python\\Python312\\python.exe\" set \"PY=%LocalAppData%\\Programs\\Python\\Python312\\python.exe\"",
                         "if not defined PY if exist \"%LocalAppData%\\Programs\\Python\\Python311\\python.exe\" set \"PY=%LocalAppData%\\Programs\\Python\\Python311\\python.exe\"",
                         "if not defined PY (",
                         "    echo   [ERREUR] Python introuvable !",
                         "    echo   Relance de l'ancienne version.",
                         "    pause",
-                        "    start \"\" /d \"" + exe_dir + "\" \"" + os.path.basename(current) + "\"",
+                        "    start \"\" /d " + q_exe_dir + " " + q_exe_name,
                         "    del /f /q \"%~f0\"",
                         "    exit /b 1",
                         ")",
@@ -1062,36 +1097,49 @@ class ScannerApp:
                         "echo   Installation de PyInstaller (peut prendre 1 min)...",
                         "\"%PY%\" -m pip install --upgrade pyinstaller pillow",
                         "echo   Compilation de la nouvelle version (1 a 2 min)...",
-                        "\"%PY%\" -m PyInstaller --onefile --noconsole --name ScannerFichiers " + icon_arg + "--clean --distpath \"" + exe_dir + "\\dist_upd\" --workpath \"" + exe_dir + "\\build_upd\" --specpath \"" + exe_dir + "\" \"" + exe_dir + "\\file_scanner_gui.pyw\"",
-                        "if not exist \"" + exe_dir + "\\dist_upd\\ScannerFichiers.exe\" (",
+                        "\"%PY%\" -m PyInstaller --onefile --noconsole --name ScannerFichiers "
+                        + icon_arg + "--clean --distpath " + q_dist
+                        + " --workpath " + q_build + " --specpath " + q_exe_dir + " " + q_pyw,
+                        "if not exist " + q_new_exe + " (",
                         "    echo.",
                         "    echo   [ERREUR] La compilation a echoue !",
                         "    echo   L'ancienne version va etre relancee.",
                         "    pause",
-                        "    rd /s /q \"" + exe_dir + "\\build_upd\" >nul 2>&1",
-                        "    start \"\" /d \"" + exe_dir + "\" \"" + os.path.basename(current) + "\"",
+                        "    rd /s /q " + q_build + " >nul 2>&1",
+                        "    start \"\" /d " + q_exe_dir + " " + q_exe_name,
                         "    del /f /q \"%~f0\"",
                         "    exit /b 1",
                         ")",
                         "echo   Remplacement de l'executable...",
-                        "copy /Y \"" + exe_dir + "\\dist_upd\\ScannerFichiers.exe\" \"" + current + "\"",
+                        "copy /Y " + q_new_exe + " " + q_current,
                         "if errorlevel 1 (",
                         "    echo   [ERREUR] Impossible de remplacer l'exe (fichier verrouille?).",
+                        "    echo   Les fichiers temporaires sont conserves dans dist_upd.",
                         "    pause",
+                        "    start \"\" /d " + q_exe_dir + " " + q_exe_name,
+                        "    del /f /q \"%~f0\"",
+                        "    exit /b 1",
                         ")",
-                        "rd /s /q \"" + exe_dir + "\\dist_upd\" >nul 2>&1",
-                        "rd /s /q \"" + exe_dir + "\\build_upd\" >nul 2>&1",
-                        "del /f /q \"" + exe_dir + "\\ScannerFichiers.spec\" >nul 2>&1",
+                        ":: Nettoyage des fichiers temporaires de compilation",
+                        "echo   Nettoyage des fichiers temporaires...",
+                        "del /f /q " + q_new_exe + " >nul 2>&1",
+                        "rd /s /q " + q_dist + " >nul 2>&1",
+                        "rd /s /q " + q_build + " >nul 2>&1",
+                        "del /f /q " + q_spec + " >nul 2>&1",
+                        "del /f /q " + bat_quote(os.path.join(exe_dir, "__pycache__")) + " >nul 2>&1",
+                        "rd /s /q " + bat_quote(os.path.join(exe_dir, "__pycache__")) + " >nul 2>&1",
                         "echo.",
                         "echo   ========================================",
                         "echo     MISE A JOUR TERMINEE !",
                         "echo   ========================================",
                         "timeout /t 2 /nobreak >nul",
-                        "start \"\" /d \"" + exe_dir + "\" \"" + os.path.basename(current) + "\"",
+                        "start \"\" /d " + q_exe_dir + " " + q_exe_name,
                         "timeout /t 1 /nobreak >nul",
+                        ":: Auto-destruction du script",
                         "del /f /q \"%~f0\"",
                     ]
-                    with open(updater, "w") as f:
+                    # UTF-8 + chcp 65001 : les chemins accentues restent lisibles par cmd
+                    with open(updater, "w", encoding="utf-8") as f:
                         f.write("\r\n".join(bat_lines))
 
                     try:
@@ -1134,19 +1182,34 @@ class ScannerApp:
         def _do_restart():
             win.destroy()
             if is_frozen and updater:
-                # .exe : lancer updater.bat dans une nouvelle fenetre console visible
+                # .exe : lancer updater.bat dans une nouvelle fenetre console visible.
+                # Liste d'arguments (jamais shell=True) : cmd.exe recoit le chemin tel quel,
+                # meme s'il contient des espaces ou des symboles.
+                # close_fds : le .bat n'herite d'aucun handle de l'appli, sinon l'ancien
+                # .exe reste verrouille et le "copy /Y" echoue.
                 try:
                     subprocess.Popen(["cmd.exe", "/c", updater],
+                                     cwd=os.path.dirname(updater) or None,
+                                     close_fds=True,
                                      creationflags=subprocess.CREATE_NEW_CONSOLE)
                 except Exception:
-                    subprocess.Popen(["cmd.exe", "/c", updater], shell=True)
+                    subprocess.Popen(["cmd.exe", "/c", updater],
+                                     cwd=os.path.dirname(updater) or None,
+                                     close_fds=True)
             else:
                 # .pyw : relancer via pythonw.exe (sans fenetre noire) ou python.exe
                 pythonw = sys.executable.replace("python.exe", "pythonw.exe")
                 if not os.path.exists(pythonw):
                     pythonw = sys.executable
-                subprocess.Popen([pythonw, current])
+                subprocess.Popen([pythonw, current], close_fds=True)
+            # Fermer proprement : le .bat attend que le processus soit mort
+            try:
+                if self._schedule_timer is not None:
+                    self._schedule_timer.cancel()
+            except Exception:
+                pass
             self.root.destroy()
+            sys.exit(0)
 
         win.after(1500, _do_restart)
 
@@ -1178,9 +1241,10 @@ class ScannerApp:
 
         lines = [
             "@echo off",
+            "chcp 65001 >nul",
             "timeout /t 2 /nobreak >nul",
             ":: Tuer le processus s'il tourne encore",
-            "taskkill /f /im \"" + exe_name + "\" >nul 2>&1",
+            "taskkill /f /im " + bat_quote(exe_name) + " >nul 2>&1",
             "timeout /t 1 /nobreak >nul",
             ":: Supprimer le raccourci Bureau",
             "powershell -NoProfile -Command \"$f=Join-Path ([Environment]::GetFolderPath('Desktop')) 'Scanner de Fichiers.lnk'; if(Test-Path $f){Remove-Item -Force $f}\"",
@@ -1194,24 +1258,24 @@ class ScannerApp:
         local_appdata = os.environ.get("LOCALAPPDATA", "")
         if local_appdata and exe_dir.lower().startswith(local_appdata.lower()):
             lines.append(":: Supprimer le dossier d'installation complet")
-            lines.append("rd /s /q \"" + exe_dir + "\"")
+            lines.append("rd /s /q " + bat_quote(exe_dir))
         else:
             # Sinon supprimer juste les fichiers de l'app (pas tout le dossier, securite)
             lines.append(":: Supprimer les fichiers de l'application")
-            lines.append("del /f /q \"" + current + "\" >nul 2>&1")
-            lines.append("del /f /q \"" + os.path.join(exe_dir, "file_scanner_gui.pyw") + "\" >nul 2>&1")
-            lines.append("del /f /q \"" + os.path.join(exe_dir, "VERSION") + "\" >nul 2>&1")
-            lines.append("del /f /q \"" + os.path.join(exe_dir, "app.ico") + "\" >nul 2>&1")
-            lines.append("del /f /q \"" + os.path.join(exe_dir, "scanner.ico") + "\" >nul 2>&1")
-            lines.append("del /f /q \"" + os.path.join(exe_dir, "uninstall.bat") + "\" >nul 2>&1")
+            lines.append("del /f /q " + bat_quote(current) + " >nul 2>&1")
+            lines.append("del /f /q " + bat_quote(os.path.join(exe_dir, "file_scanner_gui.pyw")) + " >nul 2>&1")
+            lines.append("del /f /q " + bat_quote(os.path.join(exe_dir, "VERSION")) + " >nul 2>&1")
+            lines.append("del /f /q " + bat_quote(os.path.join(exe_dir, "app.ico")) + " >nul 2>&1")
+            lines.append("del /f /q " + bat_quote(os.path.join(exe_dir, "scanner.ico")) + " >nul 2>&1")
+            lines.append("del /f /q " + bat_quote(os.path.join(exe_dir, "uninstall.bat")) + " >nul 2>&1")
 
         lines.append("echo.")
         lines.append("echo  Desinstallation terminee.")
         lines.append("timeout /t 2 /nobreak >nul")
-        lines.append("del /f /q \"" + uninstaller + "\"")
+        lines.append("del /f /q " + bat_quote(uninstaller))
 
         try:
-            with open(uninstaller, "w") as f:
+            with open(uninstaller, "w", encoding="utf-8") as f:
                 f.write("\r\n".join(lines))
         except Exception as e:
             messagebox.showerror("Desinstallation",
@@ -1220,6 +1284,7 @@ class ScannerApp:
 
         # Lancer le script en arriere-plan et fermer l'appli
         subprocess.Popen(["cmd.exe", "/c", uninstaller],
+                         close_fds=True,
                          creationflags=0x00000008)  # DETACHED_PROCESS
         self.root.destroy()
 
@@ -1331,7 +1396,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.6",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.8",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -4498,7 +4563,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "10.6"
+CURRENT_VERSION = "10.8"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
