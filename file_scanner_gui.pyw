@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v10.8 - Interface Graphique
+Scanner de Fichiers Avancé v10.9 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
+Nouveautés v10.9 :
+  - Verrous croises : optimisation, scan de fichiers et scan du demarrage ne peuvent
+    plus se lancer en meme temps (meme message d'avertissement que les autres)
 Nouveautés v10.8 :
   - updater.bat : nettoyage complet des temporaires (exe compile, dist_upd, build_upd,
     .spec, __pycache__), relance de secours si le remplacement echoue
@@ -835,7 +838,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v10.8")
+        self.root.title("Scanner de Fichiers Avancé v10.9")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1396,7 +1399,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.8",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.9",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -2875,6 +2878,13 @@ Lien documentation API :
         win.bind("<Escape>", lambda e: _cancel())
 
     def _start_scan(self):
+        # Bloquer si une optimisation est en cours
+        if getattr(self, "_optimize_running", False):
+            messagebox.showwarning(
+                "Optimisation en cours",
+                "Une optimisation Windows est actuellement en cours.\n\n"
+                "Veuillez attendre qu'elle se termine avant de lancer un scan de fichiers.")
+            return
         # Bloquer si un scan du demarrage est en cours
         if self._persist_running:
             messagebox.showwarning(
@@ -3011,6 +3021,14 @@ Lien documentation API :
                     "Scan en cours",
                     "Un scan de fichiers est actuellement en cours.\n\n"
                     "Veuillez attendre qu'il se termine avant de scanner le démarrage.")
+            return
+        # Bloquer si une optimisation est en cours
+        if getattr(self, "_optimize_running", False):
+            if not auto:
+                messagebox.showwarning(
+                    "Optimisation en cours",
+                    "Une optimisation Windows est actuellement en cours.\n\n"
+                    "Veuillez attendre qu'elle se termine avant de scanner le démarrage.")
             return
         # Empecher deux scans demarrage simultanes
         if self._persist_running:
@@ -3893,6 +3911,21 @@ Lien documentation API :
         if getattr(self, "_optimize_running", False):
             return
 
+        # Bloquer si un scan de fichiers est en cours
+        if self.scan_thread is not None and self.scan_thread.is_alive():
+            messagebox.showwarning(
+                "Scan en cours",
+                "Un scan de fichiers est actuellement en cours.\n\n"
+                "Veuillez attendre qu'il se termine avant de lancer l'optimisation.")
+            return
+        # Bloquer si un scan du demarrage est en cours
+        if self._persist_running:
+            messagebox.showwarning(
+                "Analyse en cours",
+                "Un scan du démarrage est actuellement en cours.\n\n"
+                "Veuillez attendre qu'il se termine avant de lancer l'optimisation.")
+            return
+
         try:
             import ctypes
             is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
@@ -4563,7 +4596,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "10.8"
+CURRENT_VERSION = "10.9"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
