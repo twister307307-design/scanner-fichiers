@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v10.2 - Interface Graphique
+Scanner de Fichiers Avancé v10.5 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
+Nouveautés v10.5 :
+  - Nouvel onglet dedie "🧹 Optimisation" (entre Demarrage et Stats) : bouton de
+    lancement manuel, etat des droits admin et journal complet du nettoyage
+Nouveautés v10.4 :
+  - L'optimisation Windows propose de relancer l'appli en administrateur si besoin
+    (elevation UAC + reprise automatique de l'optimisation au redemarrage)
+Nouveautés v10.3 :
+  - Nouvelle case "Optimisation Windows" (section Actions) : nettoyage systeme en fin de scan
+    (hibernation off, DISM WinSxS, %TEMP%, Temp systeme, Prefetch, caches DirectX/NVIDIA)
 Nouveautés v10.2 :
   - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
     (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
@@ -741,7 +750,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v10.2")
+        self.root.title("Scanner de Fichiers Avancé v10.5")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -751,6 +760,7 @@ class ScannerApp:
         self.stop_event    = threading.Event()
         self.pause_event   = threading.Event()  # set = en pause
         self._persist_running = False  # True si scan demarrage en cours
+        self._optimize_running = False  # True si optimisation Windows en cours
         self._device_response = None   # 'retry' | 'ignore'
         self._device_event    = threading.Event()
         self._spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -777,6 +787,8 @@ class ScannerApp:
         self._set_default_roots()
         self._poll_queue()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Reprise de l'optimisation apres une relance en administrateur
+        self.root.after(600, self._check_pending_optimize)
 
     def _check_update_async(self):
         global CURRENT_VERSION
@@ -1256,7 +1268,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.2",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.5",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1578,6 +1590,7 @@ class ScannerApp:
         self.log_dblext    = self._log_tab(notebook, "🔺 Anomalies", section_title="ANOMALIES DÉTECTÉES")
         self.log_access_errors = self._log_tab(notebook, "🟡 Erreurs accès", section_title="ERREURS D'ACCÈS")
         self.log_persist, self._persist_frame = self._log_tab(notebook, "🚀 Démarrage", return_frame=True, section_title="PROGRAMMES AU DÉMARRAGE")
+        self.log_optimize  = self._optimize_tab(notebook)
         self.tab_stats     = self._build_stats_tab(notebook)
 
         # ── Barre de recherche globale ──
@@ -2048,6 +2061,61 @@ Lien documentation API :
         self._setup_tags(txt)
         self._bind_right_click(txt)
         return txt, btn
+
+    def _optimize_tab(self, notebook):
+        """Onglet dedie a l'optimisation Windows (bouton + etat admin + journal)."""
+        frame = tk.Frame(notebook, bg=self.BG)
+        notebook.add(frame, text="🧹 Optimisation")
+
+        tk.Label(frame, text="═══ OPTIMISATION WINDOWS ═══",
+                 font=("Consolas", 8, "bold"), fg=self.ACCENT, bg=self.BG2,
+                 anchor="w", pady=4).pack(fill=tk.X)
+
+        toolbar = tk.Frame(frame, bg=self.BG2, pady=4)
+        toolbar.pack(fill=tk.X)
+        self.btn_optimize = tk.Button(toolbar, text="🧹  Lancer l'optimisation",
+                                      command=self._run_optimization,
+                                      bg=self.BG3, fg=self.ORANGE, activebackground=self.BG,
+                                      activeforeground=self.ORANGE, font=("Consolas", 8, "bold"),
+                                      borderwidth=0, cursor="hand2", pady=3, padx=10,
+                                      relief=tk.FLAT)
+        self.btn_optimize.pack(side=tk.LEFT, padx=8)
+        Tooltip(self.btn_optimize,
+                "Hibernation, DISM WinSxS, %TEMP%, Temp systeme, Prefetch, caches DirectX/NVIDIA")
+
+        # Etat des droits administrateur
+        self.lbl_admin_state = tk.Label(toolbar, text="", font=("Consolas", 7),
+                                        fg=self.DIMFG, bg=self.BG2)
+        self.lbl_admin_state.pack(side=tk.LEFT, padx=6)
+        self._refresh_admin_state()
+
+        tk.Label(frame,
+                 text="Nettoie les fichiers temporaires et caches systeme. "
+                      "Tout est regenere automatiquement par Windows.",
+                 font=("Consolas", 7), fg=self.DIMFG, bg=self.BG,
+                 anchor="w", pady=3, padx=8).pack(fill=tk.X)
+
+        txt = scrolledtext.ScrolledText(frame, bg=self.BG2, fg=self.FG,
+                                        font=("Consolas", 8), wrap=tk.WORD,
+                                        borderwidth=0, insertbackground=self.FG,
+                                        state=tk.DISABLED)
+        txt.pack(fill=tk.BOTH, expand=True)
+        self._setup_tags(txt)
+        self._bind_right_click(txt)
+        return txt
+
+    def _refresh_admin_state(self):
+        """Affiche si l'appli tourne en administrateur dans l'onglet Optimisation."""
+        try:
+            import ctypes
+            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            is_admin = False
+        if is_admin:
+            self.lbl_admin_state.config(text="🔓 Administrateur", fg=self.GREEN)
+        else:
+            self.lbl_admin_state.config(text="🔒 Mode utilisateur (relance admin demandee)",
+                                        fg=self.YELLOW)
 
     def _suspects_tab(self, notebook):
         """Onglet Suspects avec Treeview triable."""
@@ -3689,6 +3757,211 @@ Lien documentation API :
         if not stopped and self.var_summary.get():
             self._write_scan_summary(stats, safety, risk_label, risk_color, elapsed)
 
+    # ── Optimisation Windows ───────────────────────────────────────────────────
+
+    def _run_optimization(self, resumed=False):
+        """Nettoyage systeme : hibernation, DISM, TEMP, Prefetch, caches GPU.
+        Exige les droits admin : propose de relancer l'appli en administrateur sinon."""
+        if os.name != "nt":
+            self._log(self.log_optimize, "\n⚠  Optimisation : disponible uniquement sous Windows.", "yellow")
+            return
+        if getattr(self, "_optimize_running", False):
+            return
+
+        try:
+            import ctypes
+            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            is_admin = False
+
+        # ── Pas admin : proposer l'elevation UAC ──
+        if not is_admin:
+            if messagebox.askyesno(
+                    "Droits administrateur requis",
+                    "L'optimisation Windows necessite les droits administrateur\n"
+                    "(hibernation, DISM, Temp systeme, Prefetch).\n\n"
+                    "Relancer l'application en tant qu'administrateur ?\n\n"
+                    "L'optimisation reprendra automatiquement au redemarrage."):
+                self._relaunch_as_admin()
+            else:
+                self._log(self.log_optimize,
+                          "\nℹ  Optimisation annulee (droits administrateur refuses).", "dim")
+            return
+
+        # ── Deja admin : confirmation normale ──
+        if not messagebox.askyesno(
+                "Optimisation Windows",
+                "Lancer l'optimisation Windows ?\n\n"
+                "  • Desactivation de l'hibernation (hiberfil.sys)\n"
+                "  • Nettoyage WinSxS (DISM)\n"
+                "  • Vidage de %TEMP% et du Temp systeme\n"
+                "  • Vidage du Prefetch\n"
+                "  • Vidage des caches DirectX et NVIDIA\n\n"
+                "Ces fichiers sont regeneres automatiquement par Windows."):
+            self._log(self.log_optimize, "\nℹ  Optimisation annulee.", "dim")
+            return
+
+        self._optimize_running = True
+        self._set_status("🧹 Optimisation en cours…", self.ORANGE)
+        self.btn_optimize.config(state=tk.DISABLED, text="🧹  Optimisation en cours…")
+        try:
+            self.notebook.select(self.log_optimize.master)
+        except Exception:
+            pass
+        if resumed:
+            self._log(self.log_optimize, "\n🔑  Relance en administrateur reussie.", "green")
+        threading.Thread(target=self._optimize_worker, daemon=True).start()
+
+    def _relaunch_as_admin(self):
+        """Relance l'application avec elevation UAC et memorise l'optimisation a reprendre."""
+        import ctypes
+        is_frozen = getattr(sys, "frozen", False)
+
+        # Memoriser l'etat + le fait qu'il faut relancer l'optimisation
+        try:
+            self.cfg["geometry"] = self.root.geometry()
+            self.cfg["last_scan_roots"] = list(self.roots_list.get(0, tk.END))
+            self.cfg["pending_optimize"] = True
+            save_config(self.cfg)
+        except Exception:
+            pass
+
+        try:
+            if is_frozen:
+                exe    = sys.executable
+                params = ""
+            else:
+                exe = sys.executable.replace("python.exe", "pythonw.exe")
+                if not os.path.exists(exe):
+                    exe = sys.executable
+                params = f'"{os.path.abspath(__file__)}"'
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, None, 1)
+        except Exception as e:
+            ret = 0
+            self._log(self.log_optimize, f"\n✖  Relance administrateur impossible : {e}", "red")
+
+        if ret and int(ret) > 32:
+            # Elevation acceptee : fermer l'instance actuelle
+            if self._schedule_timer is not None:
+                try:
+                    self._schedule_timer.cancel()
+                except Exception:
+                    pass
+            self.root.destroy()
+        else:
+            # UAC refuse : annuler la reprise automatique
+            self.cfg["pending_optimize"] = False
+            save_config(self.cfg)
+            self._log(self.log_optimize,
+                      "\n⚠  Elevation refusee — optimisation annulee.", "yellow")
+            messagebox.showwarning(
+                "Elevation refusee",
+                "L'application n'a pas pu etre relancee en administrateur.\n"
+                "L'optimisation a ete annulee.")
+
+    def _check_pending_optimize(self):
+        """Au demarrage : reprendre l'optimisation demandee avant une relance admin."""
+        if not self.cfg.get("pending_optimize"):
+            return
+        self.cfg["pending_optimize"] = False
+        save_config(self.cfg)
+        self._run_optimization(resumed=True)
+
+    def _opt_log(self, text, tag=None):
+        """Log thread-safe vers l'onglet Journal."""
+        self.root.after(0, lambda: self._log(self.log_optimize, text, tag))
+
+    def _opt_run_cmd(self, cmd, description):
+        """Execute une commande systeme sans ouvrir de console."""
+        import subprocess
+        self._opt_log(f"  ⏳ {description}…", "dim")
+        try:
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            res = subprocess.run(cmd, shell=True, capture_output=True,
+                                 text=True, creationflags=flags)
+            if res.returncode == 0:
+                self._opt_log(f"  ✓ {description}", "green")
+                return True
+            self._opt_log(f"  ⚠ {description} — echec (code {res.returncode})", "yellow")
+        except Exception as e:
+            self._opt_log(f"  ✖ {description} — {e}", "red")
+        return False
+
+    def _opt_clean_folder(self, folder, name):
+        """Vide un dossier. Retourne (elements supprimes, octets liberes)."""
+        if not folder or not os.path.isdir(folder):
+            self._opt_log(f"  ℹ {name} — dossier introuvable", "dim")
+            return 0, 0
+        count = freed = 0
+        for item in os.listdir(folder):
+            path = os.path.join(folder, item)
+            try:
+                if os.path.isfile(path) or os.path.islink(path):
+                    try:
+                        freed += os.path.getsize(path)
+                    except Exception:
+                        pass
+                    os.unlink(path)
+                    count += 1
+                elif os.path.isdir(path):
+                    size = 0
+                    for dirpath, _, filenames in os.walk(path):
+                        for fn in filenames:
+                            try:
+                                size += os.path.getsize(os.path.join(dirpath, fn))
+                            except Exception:
+                                pass
+                    shutil.rmtree(path)
+                    count += 1
+                    freed += size
+            except Exception:
+                pass  # fichier en cours d'utilisation : on ignore
+        self._opt_log(f"  ✓ {name} — {count} element(s), {format_size(freed)} libere(s)", "green")
+        return count, freed
+
+    def _optimize_worker(self):
+        t0 = time.time()
+        total_items = total_freed = 0
+        try:
+            self._opt_log(f"\n{'═'*60}", "cyan")
+            self._opt_log("  🧹  OPTIMISATION WINDOWS", "cyan")
+            self._opt_log(f"{'═'*60}", "cyan")
+
+            self._opt_run_cmd("powercfg /hibernate off",
+                              "Desactivation de l'hibernation (hiberfil.sys)")
+            self._opt_run_cmd("Dism.exe /Online /Cleanup-Image /StartComponentCleanup",
+                              "Nettoyage WinSxS (DISM)")
+
+            targets = [
+                (os.environ.get("TEMP"), "Fichiers temporaires utilisateur (%TEMP%)"),
+                (r"C:\Windows\Temp", "Fichiers temporaires systeme"),
+                (r"C:\Windows\Prefetch", "Cache Prefetch Windows"),
+            ]
+            local_appdata = os.environ.get("LOCALAPPDATA")
+            if local_appdata:
+                targets.append((os.path.join(local_appdata, "D3DSCache"), "Cache DirectX D3DS"))
+                targets.append((os.path.join(local_appdata, "NVIDIA", "DXCache"), "Cache shaders NVIDIA"))
+
+            for folder, name in targets:
+                items, freed = self._opt_clean_folder(folder, name)
+                total_items += items
+                total_freed += freed
+
+            self._opt_log(f"\n  ✔ Optimisation terminee en {format_duration(time.time() - t0)}", "green")
+            self._opt_log(f"  Elements supprimes : {total_items:,}", "green")
+            self._opt_log(f"  Espace libere      : {format_size(total_freed)}", "green")
+            self._opt_log(f"{'═'*60}\n", "cyan")
+            self.root.after(0, lambda: self._set_status(
+                f"🧹 Optimisation terminee — {format_size(total_freed)} libere(s)", self.GREEN))
+        except Exception as e:
+            self._opt_log(f"  ✖ Erreur pendant l'optimisation : {e}", "red")
+            self.root.after(0, lambda: self._set_status("⚠ Optimisation interrompue.", self.RED))
+        finally:
+            self._optimize_running = False
+            self.root.after(0, lambda: self.btn_optimize.config(
+                state=tk.NORMAL, text="🧹  Lancer l'optimisation"))
+            self.root.after(0, self._refresh_admin_state)
+
     def _write_scan_summary(self, stats, safety, risk_label, risk_color, elapsed):
         """Ecrit un recapitulatif dans l'onglet Journal."""
         total_threats = (stats["corrupted"] + stats.get("suspects", 0)
@@ -4163,7 +4436,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "10.2"
+CURRENT_VERSION = "10.5"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
