@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v10.5 - Interface Graphique
+Scanner de Fichiers Avancé v10.6 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
+Nouveautés v10.6 :
+  - Fallback natif si psutil est absent (RAM via GlobalMemoryStatusEx / sysconf, coeurs via os.cpu_count)
+  - Message de fin de nettoyage plus lisible : "✨ NETTOYAGE TERMINE : X.XX Go LIBERES !"
 Nouveautés v10.5 :
   - Nouvel onglet dedie "🧹 Optimisation" (entre Demarrage et Stats) : bouton de
     lancement manuel, etat des droits admin et journal complet du nettoyage
@@ -55,7 +58,67 @@ try:
     import psutil
     HAS_PSUTIL = True
 except ImportError:
+    psutil = None
     HAS_PSUTIL = False
+
+
+# ─── Infos systeme (avec fallback natif si psutil absent) ─────────────────────
+
+def get_cpu_count():
+    """Nombre de coeurs logiques. psutil -> os.cpu_count() -> 1."""
+    if HAS_PSUTIL:
+        try:
+            n = psutil.cpu_count()
+            if n:
+                return int(n)
+        except Exception:
+            pass
+    return os.cpu_count() or 1
+
+
+def get_total_ram():
+    """RAM totale en octets. psutil -> API systeme native -> 4 Go par defaut."""
+    if HAS_PSUTIL:
+        try:
+            return int(psutil.virtual_memory().total)
+        except Exception:
+            pass
+    # Fallback natif Windows : GlobalMemoryStatusEx
+    if os.name == "nt":
+        try:
+            import ctypes
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong),
+                            ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong),
+                            ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong),
+                            ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong),
+                            ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return int(stat.ullTotalPhys)
+        except Exception:
+            pass
+    # Fallback natif Linux / macOS
+    try:
+        return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
+    except Exception:
+        pass
+    return 4 * 1024 ** 3  # dernier recours : 4 Go
+
+
+def format_freed(size_bytes):
+    """Formate l'espace libere en Mo ou Go avec 2 decimales."""
+    if size_bytes >= 1024 ** 3:
+        return f"{size_bytes / 1024 ** 3:.2f} Go"
+    if size_bytes >= 1024 ** 2:
+        return f"{size_bytes / 1024 ** 2:.2f} Mo"
+    return f"{size_bytes / 1024:.2f} Ko"
+
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
@@ -750,7 +813,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v10.5")
+        self.root.title("Scanner de Fichiers Avancé v10.6")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1268,7 +1331,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.5",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.6",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1467,7 +1530,7 @@ class ScannerApp:
         cores_row.pack(fill=tk.X)
         tk.Label(cores_row, text="⚡ Cœurs CPU :", font=("Consolas", 8),
                  fg=self.GREEN, bg=self.BG).pack(side=tk.LEFT)
-        max_cores = min(4, (os.cpu_count() or 2))
+        max_cores = min(4, get_cpu_count())
         self.var_cores = tk.IntVar(value=self.cfg.get("scan_cores", min(2, max_cores)))
         for n in range(1, max_cores + 1):
             tk.Radiobutton(cores_row, text=str(n), variable=self.var_cores, value=n,
@@ -3110,10 +3173,7 @@ Lien documentation API :
         threading.Thread(target=_worker, daemon=True).start()
 
     def _get_ram_limit_bytes(self):
-        if HAS_PSUTIL:
-            total_ram = psutil.virtual_memory().total
-        else:
-            total_ram = 4 * 1024 ** 3
+        total_ram = get_total_ram()
         return int(total_ram * self.var_ram.get() / 100)
 
     def _scan_worker(self):
@@ -3947,12 +4007,14 @@ Lien documentation API :
                 total_items += items
                 total_freed += freed
 
+            freed_txt = format_freed(total_freed)
             self._opt_log(f"\n  ✔ Optimisation terminee en {format_duration(time.time() - t0)}", "green")
             self._opt_log(f"  Elements supprimes : {total_items:,}", "green")
-            self._opt_log(f"  Espace libere      : {format_size(total_freed)}", "green")
+            self._opt_log(f"{'═'*60}", "cyan")
+            self._opt_log(f"  ✨  NETTOYAGE TERMINE : {freed_txt} LIBERES !", "green")
             self._opt_log(f"{'═'*60}\n", "cyan")
             self.root.after(0, lambda: self._set_status(
-                f"🧹 Optimisation terminee — {format_size(total_freed)} libere(s)", self.GREEN))
+                f"✨ Nettoyage termine : {freed_txt} liberes !", self.GREEN))
         except Exception as e:
             self._opt_log(f"  ✖ Erreur pendant l'optimisation : {e}", "red")
             self.root.after(0, lambda: self._set_status("⚠ Optimisation interrompue.", self.RED))
@@ -4436,7 +4498,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "10.5"
+CURRENT_VERSION = "10.6"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
