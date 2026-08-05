@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v11.1 - Interface Graphique
+Scanner de Fichiers Avancé v11.2 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
+Nouveautés v11.2 :
+  - Onglet Composants : retrait de l'indicateur/avertissement "droits administrateur"
+    (WMI lit le materiel sans elevation, l'avertissement n'avait pas lieu d'etre)
 Nouveautés v11.1 :
   - Nouvel onglet "🔬 Composants" (a cote de Optimisation) : inventaire materiel complet
     (CPU, RAM, GPU, carte mere, disques, OS, BIOS, reseau, audio, ecran) via PowerShell/WMI,
@@ -1093,7 +1096,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v11.1")
+        self.root.title("Scanner de Fichiers Avancé v11.2")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1654,7 +1657,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v11.1",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v11.2",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -2533,10 +2536,6 @@ Lien documentation API :
         Tooltip(self.btn_hardware,
                 "CPU, RAM, GPU, carte mere, disques, OS, BIOS, reseau, audio, ecran")
 
-        self.lbl_hardware_admin = tk.Label(toolbar, text="", font=("Consolas", 7),
-                                           fg=self.DIMFG, bg=self.BG2)
-        self.lbl_hardware_admin.pack(side=tk.LEFT, padx=6)
-        self._refresh_hardware_admin_state()
 
         tk.Label(frame,
                  text="Inventaire complet du materiel. Les composants essentiels "
@@ -2552,19 +2551,6 @@ Lien documentation API :
         self._setup_tags(txt)
         self._bind_right_click(txt)
         return txt
-
-    def _refresh_hardware_admin_state(self):
-        """Affiche si l'appli tourne en administrateur dans l'onglet Composants."""
-        try:
-            import ctypes
-            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
-        except Exception:
-            is_admin = False
-        if is_admin:
-            self.lbl_hardware_admin.config(text="🔓 Administrateur — inventaire complet", fg=self.GREEN)
-        else:
-            self.lbl_hardware_admin.config(text="🔒 Mode utilisateur — certains details peuvent manquer",
-                                           fg=self.YELLOW)
 
     def _run_hardware_scan(self):
         if os.name != "nt":
@@ -2593,12 +2579,6 @@ Lien documentation API :
                 "Veuillez attendre qu'elle se termine avant d'analyser les composants.")
             return
 
-        try:
-            import ctypes
-            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
-        except Exception:
-            is_admin = False
-
         self._hardware_running = True
         self.btn_hardware.config(state=tk.DISABLED, text="🔬  Analyse en cours…")
         self._set_status("🔬 Analyse des composants en cours…", self.ACCENT)
@@ -2606,18 +2586,14 @@ Lien documentation API :
             self.notebook.select(self.log_hardware.master)
         except Exception:
             pass
-        threading.Thread(target=self._hardware_worker, args=(is_admin,), daemon=True).start()
+        threading.Thread(target=self._hardware_worker, daemon=True).start()
 
-    def _hardware_worker(self, is_admin):
+    def _hardware_worker(self):
         t0 = time.time()
         try:
             self._log(self.log_hardware, f"\n{'═'*60}", "cyan")
             self._log(self.log_hardware, "  🔬  ANALYSE DES COMPOSANTS", "cyan")
             self._log(self.log_hardware, f"{'═'*60}", "cyan")
-            if not is_admin:
-                self._log(self.log_hardware,
-                          "  🔒 Mode utilisateur — certains details (S.M.A.R.T., temperatures) "
-                          "peuvent etre incomplets.", "dim")
 
             items = gather_hardware_info()
 
@@ -2653,7 +2629,6 @@ Lien documentation API :
             self._hardware_running = False
             self.root.after(0, lambda: self.btn_hardware.config(
                 state=tk.NORMAL, text="🔬  Analyser les composants"))
-            self.root.after(0, self._refresh_hardware_admin_state)
 
     def _stop_optimize(self):
         if not getattr(self, "_optimize_running", False):
@@ -5036,7 +5011,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "11.1"
+CURRENT_VERSION = "11.2"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
