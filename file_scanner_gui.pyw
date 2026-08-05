@@ -1,7 +1,19 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v10.9 - Interface Graphique
+Scanner de Fichiers Avancé v11.1 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
+Nouveautés v11.1 :
+  - Nouvel onglet "🔬 Composants" (a cote de Optimisation) : inventaire materiel complet
+    (CPU, RAM, GPU, carte mere, disques, OS, BIOS, reseau, audio, ecran) via PowerShell/WMI,
+    avec les composants essentiels mis en evidence (★) et etat des droits admin affiche
+Nouveautés v11.0 :
+  - Detection dynamique du GPU (PowerShell/WMI + fallback registre) : nettoie les caches
+    shaders NVIDIA, AMD ou Intel selon le materiel reellement present
+  - Optimisation sans admin : les etapes necessitant les droits (hibernation, DISM) sont
+    desormais ignorees proprement avec un avertissement, sans proposer de relance UAC
+  - Commandes DISM/powercfg executees en synchrone via Popen + poll() : possibilite
+    d'interrompre proprement le processus enfant avec le nouveau bouton "Arreter l'analyse"
+  - Tempo naturel (1-2s) entre chaque etape de l'optimisation
 Nouveautés v10.9 :
   - Verrous croises : optimisation, scan de fichiers et scan du demarrage ne peuvent
     plus se lancer en meme temps (meme message d'avertissement que les autres)
@@ -55,6 +67,7 @@ import os
 import sys
 import hashlib
 import time
+import random
 import stat
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -712,6 +725,248 @@ def bat_quote(path):
     return '"' + p + '"'
 
 
+def detect_gpus():
+    """Detecte les GPU installes via WMI (PowerShell), avec fallback registre.
+    Retourne un set parmi {'nvidia', 'amd', 'intel'} (peut en contenir plusieurs)."""
+    import subprocess
+    found = set()
+    if os.name != "nt":
+        return found
+
+    def classify(name):
+        n = (name or "").lower()
+        if "nvidia" in n or "geforce" in n or "rtx" in n or "gtx" in n or "quadro" in n:
+            found.add("nvidia")
+        elif "amd" in n or "radeon" in n or "ati " in n:
+            found.add("amd")
+        elif "intel" in n:
+            found.add("intel")
+
+    try:
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"],
+            capture_output=True, text=True, timeout=8,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if res.returncode == 0 and res.stdout.strip():
+            for line in res.stdout.splitlines():
+                classify(line)
+    except Exception:
+        pass
+
+    if not found:
+        try:
+            res = subprocess.run(
+                ["wmic", "path", "win32_VideoController", "get", "name"],
+                capture_output=True, text=True, timeout=8,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    classify(line)
+        except Exception:
+            pass
+
+    if not found:
+        # Dernier recours : cle de registre des pilotes video
+        try:
+            import winreg
+            key_path = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
+                i = 0
+                while True:
+                    try:
+                        sub = winreg.EnumKey(key, i)
+                        i += 1
+                        if not sub.isdigit():
+                            continue
+                        with winreg.OpenKey(key, sub) as subkey:
+                            try:
+                                name, _ = winreg.QueryValueEx(subkey, "DriverDesc")
+                                classify(name)
+                            except FileNotFoundError:
+                                pass
+                    except OSError:
+                        break
+        except Exception:
+            pass
+
+    return found
+
+
+def _ps_query(cmd):
+    """Execute une commande PowerShell et retourne stdout (liste de lignes), ou [] si echec."""
+    import subprocess
+    try:
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", cmd],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if res.returncode == 0 and res.stdout.strip():
+            return [l.strip() for l in res.stdout.splitlines() if l.strip()]
+    except Exception:
+        pass
+    return []
+
+
+def gather_hardware_info():
+    """Inventaire materiel complet via WMI/PowerShell (fallback wmic).
+    Retourne une liste de (categorie, label, valeur, essentiel:bool)."""
+    if os.name != "nt":
+        return []
+    items = []
+
+    def add(cat, label, value, essential=False):
+        if value:
+            items.append((cat, label, value, essential))
+
+    # CPU
+    lines = _ps_query("(Get-CimInstance Win32_Processor | Select-Object -First 1 "
+                       "Name,NumberOfCores,NumberOfLogicalProcessors,MaxClockSpeed | "
+                       "Format-List | Out-String).Trim()")
+    cpu_name = cores = threads = clock = ""
+    for l in lines:
+        if l.startswith("Name"):
+            cpu_name = l.split(":", 1)[-1].strip()
+        elif l.startswith("NumberOfCores"):
+            cores = l.split(":", 1)[-1].strip()
+        elif l.startswith("NumberOfLogicalProcessors"):
+            threads = l.split(":", 1)[-1].strip()
+        elif l.startswith("MaxClockSpeed"):
+            clock = l.split(":", 1)[-1].strip()
+    if cpu_name:
+        detail = cpu_name
+        if cores:
+            detail += f" — {cores} coeurs"
+        if threads:
+            detail += f" / {threads} threads"
+        if clock:
+            try:
+                detail += f" @ {int(clock)/1000:.2f} GHz"
+            except ValueError:
+                pass
+        add("Processeur", "CPU", detail, essential=True)
+    else:
+        add("Processeur", "CPU", f"{get_cpu_count()} coeurs logiques (detection limitee)", essential=True)
+
+    # RAM
+    ram_total = get_total_ram()
+    lines = _ps_query("Get-CimInstance Win32_PhysicalMemory | "
+                       "ForEach-Object { \"$($_.Capacity)|$($_.Speed)|$($_.Manufacturer)\" }")
+    modules = []
+    for l in lines:
+        parts = l.split("|")
+        if len(parts) == 3 and parts[0].isdigit():
+            modules.append(parts)
+    if modules:
+        speed = modules[0][1].strip()
+        manuf = modules[0][2].strip()
+        detail = f"{format_freed(ram_total)} — {len(modules)} barrette(s)"
+        if speed and speed != "0":
+            detail += f" @ {speed} MHz"
+        if manuf:
+            detail += f" ({manuf})"
+        add("Memoire", "RAM", detail, essential=True)
+    else:
+        add("Memoire", "RAM", f"{format_freed(ram_total)} installes", essential=True)
+
+    # GPU
+    lines = _ps_query("Get-CimInstance Win32_VideoController | "
+                       "ForEach-Object { \"$($_.Name)|$($_.AdapterRAM)\" }")
+    if not lines:
+        gpus = detect_gpus()
+        for g in gpus:
+            add("Carte graphique", "GPU", g.upper(), essential=True)
+    for l in lines:
+        parts = l.split("|")
+        name = parts[0].strip() if parts else ""
+        vram = parts[1].strip() if len(parts) > 1 else ""
+        if not name:
+            continue
+        detail = name
+        try:
+            if vram and int(vram) > 0:
+                detail += f" — {format_freed(int(vram))} VRAM"
+        except ValueError:
+            pass
+        add("Carte graphique", "GPU", detail, essential=True)
+
+    # Carte mere
+    lines = _ps_query("(Get-CimInstance Win32_BaseBoard | Select-Object -First 1 "
+                       "Manufacturer,Product | Format-List | Out-String).Trim()")
+    manuf = prod = ""
+    for l in lines:
+        if l.startswith("Manufacturer"):
+            manuf = l.split(":", 1)[-1].strip()
+        elif l.startswith("Product"):
+            prod = l.split(":", 1)[-1].strip()
+    if manuf or prod:
+        add("Carte mere", "Carte mere", f"{manuf} {prod}".strip(), essential=True)
+
+    # Disques
+    lines = _ps_query("Get-CimInstance Win32_DiskDrive | "
+                       "ForEach-Object { \"$($_.Model)|$($_.Size)|$($_.MediaType)\" }")
+    for l in lines:
+        parts = l.split("|")
+        name = parts[0].strip() if parts else ""
+        size = parts[1].strip() if len(parts) > 1 else ""
+        media = parts[2].strip() if len(parts) > 2 else ""
+        if not name:
+            continue
+        detail = name
+        try:
+            if size and size.isdigit():
+                detail += f" — {format_freed(int(size))}"
+        except ValueError:
+            pass
+        is_ssd = "ssd" in name.lower() or "ssd" in media.lower() or "nvme" in name.lower()
+        if media and "fixed" not in media.lower():
+            detail += f" ({media})"
+        add("Stockage", "Disque" + (" (SSD)" if is_ssd else ""), detail, essential=True)
+
+    # OS
+    lines = _ps_query("(Get-CimInstance Win32_OperatingSystem | Select-Object -First 1 "
+                       "Caption,OSArchitecture,Version | Format-List | Out-String).Trim()")
+    caption = arch = ""
+    for l in lines:
+        if l.startswith("Caption"):
+            caption = l.split(":", 1)[-1].strip()
+        elif l.startswith("OSArchitecture"):
+            arch = l.split(":", 1)[-1].strip()
+    if caption:
+        add("Systeme", "OS", f"{caption} ({arch})" if arch else caption, essential=True)
+
+    # BIOS / UEFI
+    lines = _ps_query("(Get-CimInstance Win32_BIOS | Select-Object -First 1 "
+                       "Manufacturer,SMBIOSBIOSVersion | Format-List | Out-String).Trim()")
+    bmanuf = bver = ""
+    for l in lines:
+        if l.startswith("Manufacturer"):
+            bmanuf = l.split(":", 1)[-1].strip()
+        elif l.startswith("SMBIOSBIOSVersion"):
+            bver = l.split(":", 1)[-1].strip()
+    if bmanuf or bver:
+        add("BIOS", "BIOS/UEFI", f"{bmanuf} {bver}".strip())
+
+    # Reseau (adaptateurs actifs uniquement)
+    lines = _ps_query("Get-CimInstance Win32_NetworkAdapter -Filter \"NetEnabled=true\" | "
+                       "ForEach-Object { $_.Name }")
+    for l in lines[:4]:
+        add("Reseau", "Adaptateur", l)
+
+    # Son
+    lines = _ps_query("Get-CimInstance Win32_SoundDevice | ForEach-Object { $_.Name }")
+    for l in lines[:2]:
+        add("Audio", "Peripherique son", l)
+
+    # Moniteur(s)
+    lines = _ps_query("Get-CimInstance Win32_DesktopMonitor | "
+                       "Where-Object { $_.Name } | ForEach-Object { $_.Name }")
+    for l in lines[:3]:
+        add("Affichage", "Moniteur", l)
+
+    return items
+
+
 def format_size(size_bytes):
     if size_bytes < 0:
         return "?"
@@ -838,7 +1093,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v10.9")
+        self.root.title("Scanner de Fichiers Avancé v11.1")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -849,6 +1104,8 @@ class ScannerApp:
         self.pause_event   = threading.Event()  # set = en pause
         self._persist_running = False  # True si scan demarrage en cours
         self._optimize_running = False  # True si optimisation Windows en cours
+        self._optimize_cancel = threading.Event()  # signal d'arret pour l'optimisation
+        self._hardware_running = False  # True si analyse des composants en cours
         self._device_response = None   # 'retry' | 'ignore'
         self._device_event    = threading.Event()
         self._spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -875,8 +1132,6 @@ class ScannerApp:
         self._set_default_roots()
         self._poll_queue()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        # Reprise de l'optimisation apres une relance en administrateur
-        self.root.after(600, self._check_pending_optimize)
 
     def _check_update_async(self):
         global CURRENT_VERSION
@@ -1399,7 +1654,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v10.9",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v11.1",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1722,6 +1977,7 @@ class ScannerApp:
         self.log_access_errors = self._log_tab(notebook, "🟡 Erreurs accès", section_title="ERREURS D'ACCÈS")
         self.log_persist, self._persist_frame = self._log_tab(notebook, "🚀 Démarrage", return_frame=True, section_title="PROGRAMMES AU DÉMARRAGE")
         self.log_optimize  = self._optimize_tab(notebook)
+        self.log_hardware  = self._hardware_tab(notebook)
         self.tab_stats     = self._build_stats_tab(notebook)
 
         # ── Barre de recherche globale ──
@@ -2212,7 +2468,15 @@ Lien documentation API :
                                       relief=tk.FLAT)
         self.btn_optimize.pack(side=tk.LEFT, padx=8)
         Tooltip(self.btn_optimize,
-                "Hibernation, DISM WinSxS, %TEMP%, Temp systeme, Prefetch, caches DirectX/NVIDIA")
+                "Hibernation, DISM WinSxS, %TEMP%, Temp systeme, Prefetch, caches GPU detectes")
+
+        self.btn_optimize_stop = tk.Button(toolbar, text="■  Arrêter l'analyse",
+                                           command=self._stop_optimize,
+                                           bg=self.BG3, fg=self.RED, activebackground=self.BG,
+                                           activeforeground=self.RED, font=("Consolas", 8, "bold"),
+                                           borderwidth=0, cursor="hand2", pady=3, padx=10,
+                                           relief=tk.FLAT, state=tk.DISABLED)
+        self.btn_optimize_stop.pack(side=tk.LEFT, padx=4)
 
         # Etat des droits administrateur
         self.lbl_admin_state = tk.Label(toolbar, text="", font=("Consolas", 7),
@@ -2247,6 +2511,156 @@ Lien documentation API :
         else:
             self.lbl_admin_state.config(text="🔒 Mode utilisateur (relance admin demandee)",
                                         fg=self.YELLOW)
+
+    def _hardware_tab(self, notebook):
+        """Onglet dedie a l'inventaire materiel (essentiels mis en evidence)."""
+        frame = tk.Frame(notebook, bg=self.BG)
+        notebook.add(frame, text="🔬 Composants")
+
+        tk.Label(frame, text="═══ ANALYSE DES COMPOSANTS ═══",
+                 font=("Consolas", 8, "bold"), fg=self.ACCENT, bg=self.BG2,
+                 anchor="w", pady=4).pack(fill=tk.X)
+
+        toolbar = tk.Frame(frame, bg=self.BG2, pady=4)
+        toolbar.pack(fill=tk.X)
+        self.btn_hardware = tk.Button(toolbar, text="🔬  Analyser les composants",
+                                      command=self._run_hardware_scan,
+                                      bg=self.BG3, fg=self.ACCENT, activebackground=self.BG,
+                                      activeforeground=self.ACCENT, font=("Consolas", 8, "bold"),
+                                      borderwidth=0, cursor="hand2", pady=3, padx=10,
+                                      relief=tk.FLAT)
+        self.btn_hardware.pack(side=tk.LEFT, padx=8)
+        Tooltip(self.btn_hardware,
+                "CPU, RAM, GPU, carte mere, disques, OS, BIOS, reseau, audio, ecran")
+
+        self.lbl_hardware_admin = tk.Label(toolbar, text="", font=("Consolas", 7),
+                                           fg=self.DIMFG, bg=self.BG2)
+        self.lbl_hardware_admin.pack(side=tk.LEFT, padx=6)
+        self._refresh_hardware_admin_state()
+
+        tk.Label(frame,
+                 text="Inventaire complet du materiel. Les composants essentiels "
+                      "(CPU, RAM, GPU, disque, carte mere, OS) sont mis en evidence.",
+                 font=("Consolas", 7), fg=self.DIMFG, bg=self.BG,
+                 anchor="w", pady=3, padx=8).pack(fill=tk.X)
+
+        txt = scrolledtext.ScrolledText(frame, bg=self.BG2, fg=self.FG,
+                                        font=("Consolas", 8), wrap=tk.WORD,
+                                        borderwidth=0, insertbackground=self.FG,
+                                        state=tk.DISABLED)
+        txt.pack(fill=tk.BOTH, expand=True)
+        self._setup_tags(txt)
+        self._bind_right_click(txt)
+        return txt
+
+    def _refresh_hardware_admin_state(self):
+        """Affiche si l'appli tourne en administrateur dans l'onglet Composants."""
+        try:
+            import ctypes
+            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            is_admin = False
+        if is_admin:
+            self.lbl_hardware_admin.config(text="🔓 Administrateur — inventaire complet", fg=self.GREEN)
+        else:
+            self.lbl_hardware_admin.config(text="🔒 Mode utilisateur — certains details peuvent manquer",
+                                           fg=self.YELLOW)
+
+    def _run_hardware_scan(self):
+        if os.name != "nt":
+            self._log(self.log_hardware, "\n⚠  Analyse des composants : disponible uniquement sous Windows.", "yellow")
+            return
+        if getattr(self, "_hardware_running", False):
+            return
+
+        # Verrous croises avec les autres operations lourdes
+        if self.scan_thread is not None and self.scan_thread.is_alive():
+            messagebox.showwarning(
+                "Scan en cours",
+                "Un scan de fichiers est actuellement en cours.\n\n"
+                "Veuillez attendre qu'il se termine avant d'analyser les composants.")
+            return
+        if self._persist_running:
+            messagebox.showwarning(
+                "Analyse en cours",
+                "Un scan du démarrage est actuellement en cours.\n\n"
+                "Veuillez attendre qu'il se termine avant d'analyser les composants.")
+            return
+        if getattr(self, "_optimize_running", False):
+            messagebox.showwarning(
+                "Optimisation en cours",
+                "Une optimisation Windows est actuellement en cours.\n\n"
+                "Veuillez attendre qu'elle se termine avant d'analyser les composants.")
+            return
+
+        try:
+            import ctypes
+            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            is_admin = False
+
+        self._hardware_running = True
+        self.btn_hardware.config(state=tk.DISABLED, text="🔬  Analyse en cours…")
+        self._set_status("🔬 Analyse des composants en cours…", self.ACCENT)
+        try:
+            self.notebook.select(self.log_hardware.master)
+        except Exception:
+            pass
+        threading.Thread(target=self._hardware_worker, args=(is_admin,), daemon=True).start()
+
+    def _hardware_worker(self, is_admin):
+        t0 = time.time()
+        try:
+            self._log(self.log_hardware, f"\n{'═'*60}", "cyan")
+            self._log(self.log_hardware, "  🔬  ANALYSE DES COMPOSANTS", "cyan")
+            self._log(self.log_hardware, f"{'═'*60}", "cyan")
+            if not is_admin:
+                self._log(self.log_hardware,
+                          "  🔒 Mode utilisateur — certains details (S.M.A.R.T., temperatures) "
+                          "peuvent etre incomplets.", "dim")
+
+            items = gather_hardware_info()
+
+            if not items:
+                self._log(self.log_hardware, "\n  ⚠ Aucune information recuperee.", "yellow")
+                return
+
+            essentials = [i for i in items if i[3]]
+            others = [i for i in items if not i[3]]
+
+            if essentials:
+                self._log(self.log_hardware, "\n  ★ COMPOSANTS ESSENTIELS", "cyan")
+                self._log(self.log_hardware, f"  {'─'*56}", "dim")
+                for cat, label, value, _ in essentials:
+                    self._log(self.log_hardware, f"  ★ {label:<14} : {value}", "green")
+
+            if others:
+                self._log(self.log_hardware, "\n  ○ AUTRES COMPOSANTS", "cyan")
+                self._log(self.log_hardware, f"  {'─'*56}", "dim")
+                for cat, label, value, _ in others:
+                    self._log(self.log_hardware, f"  ○ {label:<14} : {value}", "dim")
+
+            self._log(self.log_hardware, f"\n  ✔ Analyse terminee en {format_duration(time.time() - t0)}", "green")
+            self._log(self.log_hardware, f"  {len(items)} composant(s) detecte(s), "
+                                         f"dont {len(essentials)} essentiel(s)", "green")
+            self._log(self.log_hardware, f"{'═'*60}\n", "cyan")
+            self.root.after(0, lambda: self._set_status(
+                f"🔬 Analyse terminee — {len(items)} composant(s)", self.GREEN))
+        except Exception as e:
+            self._log(self.log_hardware, f"  ✖ Erreur pendant l'analyse : {e}", "red")
+            self.root.after(0, lambda: self._set_status("⚠ Analyse des composants interrompue.", self.RED))
+        finally:
+            self._hardware_running = False
+            self.root.after(0, lambda: self.btn_hardware.config(
+                state=tk.NORMAL, text="🔬  Analyser les composants"))
+            self.root.after(0, self._refresh_hardware_admin_state)
+
+    def _stop_optimize(self):
+        if not getattr(self, "_optimize_running", False):
+            return
+        self._optimize_cancel.set()
+        self.btn_optimize_stop.config(state=tk.DISABLED)
+        self._set_status("⏹ Arrêt de l'optimisation demandé…", self.YELLOW)
 
     def _suspects_tab(self, notebook):
         """Onglet Suspects avec Treeview triable."""
@@ -2878,6 +3292,13 @@ Lien documentation API :
         win.bind("<Escape>", lambda e: _cancel())
 
     def _start_scan(self):
+        # Bloquer si une analyse des composants est en cours
+        if getattr(self, "_hardware_running", False):
+            messagebox.showwarning(
+                "Analyse en cours",
+                "Une analyse des composants est actuellement en cours.\n\n"
+                "Veuillez attendre qu'elle se termine avant de lancer un scan de fichiers.")
+            return
         # Bloquer si une optimisation est en cours
         if getattr(self, "_optimize_running", False):
             messagebox.showwarning(
@@ -3028,6 +3449,14 @@ Lien documentation API :
                 messagebox.showwarning(
                     "Optimisation en cours",
                     "Une optimisation Windows est actuellement en cours.\n\n"
+                    "Veuillez attendre qu'elle se termine avant de scanner le démarrage.")
+            return
+        # Bloquer si une analyse des composants est en cours
+        if getattr(self, "_hardware_running", False):
+            if not auto:
+                messagebox.showwarning(
+                    "Analyse en cours",
+                    "Une analyse des composants est actuellement en cours.\n\n"
                     "Veuillez attendre qu'elle se termine avant de scanner le démarrage.")
             return
         # Empecher deux scans demarrage simultanes
@@ -3925,6 +4354,13 @@ Lien documentation API :
                 "Un scan du démarrage est actuellement en cours.\n\n"
                 "Veuillez attendre qu'il se termine avant de lancer l'optimisation.")
             return
+        # Bloquer si une analyse des composants est en cours
+        if getattr(self, "_hardware_running", False):
+            messagebox.showwarning(
+                "Analyse en cours",
+                "Une analyse des composants est actuellement en cours.\n\n"
+                "Veuillez attendre qu'elle se termine avant de lancer l'optimisation.")
+            return
 
         try:
             import ctypes
@@ -3932,21 +4368,9 @@ Lien documentation API :
         except Exception:
             is_admin = False
 
-        # ── Pas admin : proposer l'elevation UAC ──
-        if not is_admin:
-            if messagebox.askyesno(
-                    "Droits administrateur requis",
-                    "L'optimisation Windows necessite les droits administrateur\n"
-                    "(hibernation, DISM, Temp systeme, Prefetch).\n\n"
-                    "Relancer l'application en tant qu'administrateur ?\n\n"
-                    "L'optimisation reprendra automatiquement au redemarrage."):
-                self._relaunch_as_admin()
-            else:
-                self._log(self.log_optimize,
-                          "\nℹ  Optimisation annulee (droits administrateur refuses).", "dim")
-            return
-
-        # ── Deja admin : confirmation normale ──
+        # ── Confirmation ──
+        admin_note = ("" if is_admin else
+            "\n\n⚠ Application non-administrateur : hibernation et DISM seront ignores.")
         if not messagebox.askyesno(
                 "Optimisation Windows",
                 "Lancer l'optimisation Windows ?\n\n"
@@ -3954,104 +4378,75 @@ Lien documentation API :
                 "  • Nettoyage WinSxS (DISM)\n"
                 "  • Vidage de %TEMP% et du Temp systeme\n"
                 "  • Vidage du Prefetch\n"
-                "  • Vidage des caches DirectX et NVIDIA\n\n"
-                "Ces fichiers sont regeneres automatiquement par Windows."):
+                "  • Vidage des caches GPU (selon le materiel detecte)\n\n"
+                "Ces fichiers sont regeneres automatiquement par Windows."
+                + admin_note):
             self._log(self.log_optimize, "\nℹ  Optimisation annulee.", "dim")
             return
 
         self._optimize_running = True
+        self._optimize_cancel = threading.Event()
         self._set_status("🧹 Optimisation en cours…", self.ORANGE)
         self.btn_optimize.config(state=tk.DISABLED, text="🧹  Optimisation en cours…")
+        self.btn_optimize_stop.config(state=tk.NORMAL)
         try:
             self.notebook.select(self.log_optimize.master)
         except Exception:
             pass
         if resumed:
             self._log(self.log_optimize, "\n🔑  Relance en administrateur reussie.", "green")
-        threading.Thread(target=self._optimize_worker, daemon=True).start()
-
-    def _relaunch_as_admin(self):
-        """Relance l'application avec elevation UAC et memorise l'optimisation a reprendre."""
-        import ctypes
-        is_frozen = getattr(sys, "frozen", False)
-
-        # Memoriser l'etat + le fait qu'il faut relancer l'optimisation
-        try:
-            self.cfg["geometry"] = self.root.geometry()
-            self.cfg["last_scan_roots"] = list(self.roots_list.get(0, tk.END))
-            self.cfg["pending_optimize"] = True
-            save_config(self.cfg)
-        except Exception:
-            pass
-
-        try:
-            if is_frozen:
-                exe    = sys.executable
-                params = ""
-            else:
-                exe = sys.executable.replace("python.exe", "pythonw.exe")
-                if not os.path.exists(exe):
-                    exe = sys.executable
-                params = f'"{os.path.abspath(__file__)}"'
-            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, None, 1)
-        except Exception as e:
-            ret = 0
-            self._log(self.log_optimize, f"\n✖  Relance administrateur impossible : {e}", "red")
-
-        if ret and int(ret) > 32:
-            # Elevation acceptee : fermer l'instance actuelle
-            if self._schedule_timer is not None:
-                try:
-                    self._schedule_timer.cancel()
-                except Exception:
-                    pass
-            self.root.destroy()
-        else:
-            # UAC refuse : annuler la reprise automatique
-            self.cfg["pending_optimize"] = False
-            save_config(self.cfg)
-            self._log(self.log_optimize,
-                      "\n⚠  Elevation refusee — optimisation annulee.", "yellow")
-            messagebox.showwarning(
-                "Elevation refusee",
-                "L'application n'a pas pu etre relancee en administrateur.\n"
-                "L'optimisation a ete annulee.")
-
-    def _check_pending_optimize(self):
-        """Au demarrage : reprendre l'optimisation demandee avant une relance admin."""
-        if not self.cfg.get("pending_optimize"):
-            return
-        self.cfg["pending_optimize"] = False
-        save_config(self.cfg)
-        self._run_optimization(resumed=True)
+        threading.Thread(target=self._optimize_worker, args=(is_admin,), daemon=True).start()
 
     def _opt_log(self, text, tag=None):
         """Log thread-safe vers l'onglet Journal."""
         self.root.after(0, lambda: self._log(self.log_optimize, text, tag))
 
-    def _opt_run_cmd(self, cmd, description):
-        """Execute une commande systeme sans ouvrir de console."""
+    def _opt_run_cmd(self, cmd, description, requires_admin=False, is_admin=True):
+        """Execute une commande systeme sans ouvrir de console, de maniere synchrone
+        et annulable (poll() + terminate() si l'utilisateur clique sur Arreter)."""
         import subprocess
+        if requires_admin and not is_admin:
+            self._opt_log(f"  ⚠️ Privilèges Administrateur requis pour cette étape — Étape ignorée : {description}", "yellow")
+            return False
         self._opt_log(f"  ⏳ {description}…", "dim")
+        proc = None
         try:
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            res = subprocess.run(cmd, shell=True, capture_output=True,
-                                 text=True, creationflags=flags)
-            if res.returncode == 0:
+            proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True, creationflags=flags)
+            while True:
+                try:
+                    ret = proc.wait(timeout=0.3)
+                    break
+                except subprocess.TimeoutExpired:
+                    if self._optimize_cancel.is_set():
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                        self._opt_log(f"  ⏹ {description} — interrompu par l'utilisateur", "yellow")
+                        return False
+            if ret == 0:
                 self._opt_log(f"  ✓ {description}", "green")
                 return True
-            self._opt_log(f"  ⚠ {description} — echec (code {res.returncode})", "yellow")
+            self._opt_log(f"  ⚠ {description} — echec (code {ret})", "yellow")
         except Exception as e:
             self._opt_log(f"  ✖ {description} — {e}", "red")
         return False
 
     def _opt_clean_folder(self, folder, name):
         """Vide un dossier. Retourne (elements supprimes, octets liberes)."""
+        if self._optimize_cancel.is_set():
+            return 0, 0
         if not folder or not os.path.isdir(folder):
             self._opt_log(f"  ℹ {name} — dossier introuvable", "dim")
             return 0, 0
         count = freed = 0
         for item in os.listdir(folder):
+            if self._optimize_cancel.is_set():
+                self._opt_log(f"  ⏹ {name} — interrompu ({count} element(s) traites)", "yellow")
+                return count, freed
             path = os.path.join(folder, item)
             try:
                 if os.path.isfile(path) or os.path.islink(path):
@@ -4077,42 +4472,86 @@ Lien documentation API :
         self._opt_log(f"  ✓ {name} — {count} element(s), {format_size(freed)} libere(s)", "green")
         return count, freed
 
-    def _optimize_worker(self):
+    def _optimize_worker(self, is_admin):
         t0 = time.time()
         total_items = total_freed = 0
+        cancelled = False
         try:
             self._opt_log(f"\n{'═'*60}", "cyan")
             self._opt_log("  🧹  OPTIMISATION WINDOWS", "cyan")
             self._opt_log(f"{'═'*60}", "cyan")
+            if not is_admin:
+                self._opt_log("  🔒 Mode utilisateur — les etapes necessitant l'administrateur seront ignorees.", "dim")
 
             self._opt_run_cmd("powercfg /hibernate off",
-                              "Desactivation de l'hibernation (hiberfil.sys)")
-            self._opt_run_cmd("Dism.exe /Online /Cleanup-Image /StartComponentCleanup",
-                              "Nettoyage WinSxS (DISM)")
+                              "Desactivation de l'hibernation (hiberfil.sys)",
+                              requires_admin=True, is_admin=is_admin)
+            if self._optimize_cancel.is_set():
+                cancelled = True
 
-            targets = [
-                (os.environ.get("TEMP"), "Fichiers temporaires utilisateur (%TEMP%)"),
-                (r"C:\Windows\Temp", "Fichiers temporaires systeme"),
-                (r"C:\Windows\Prefetch", "Cache Prefetch Windows"),
-            ]
+            if not cancelled:
+                time.sleep(random.uniform(1.0, 2.0))  # tempo naturel entre chaque etape
+                self._opt_run_cmd("Dism.exe /Online /Cleanup-Image /StartComponentCleanup",
+                                  "Nettoyage WinSxS (DISM)",
+                                  requires_admin=True, is_admin=is_admin)
+                if self._optimize_cancel.is_set():
+                    cancelled = True
+
+            targets = []
+            if not cancelled:
+                time.sleep(random.uniform(1.0, 2.0))
+                targets = [
+                    (os.environ.get("TEMP"), "Fichiers temporaires utilisateur (%TEMP%)"),
+                    (r"C:\Windows\Temp", "Fichiers temporaires systeme"),
+                    (r"C:\Windows\Prefetch", "Cache Prefetch Windows"),
+                ]
             local_appdata = os.environ.get("LOCALAPPDATA")
-            if local_appdata:
+            if local_appdata and not cancelled:
                 targets.append((os.path.join(local_appdata, "D3DSCache"), "Cache DirectX D3DS"))
-                targets.append((os.path.join(local_appdata, "NVIDIA", "DXCache"), "Cache shaders NVIDIA"))
+
+                gpus = detect_gpus()
+                if gpus:
+                    self._opt_log(f"  🎮 GPU detecte(s) : {', '.join(sorted(gpus))}", "cyan")
+                else:
+                    self._opt_log("  🎮 Aucun GPU detecte — caches constructeur ignores", "dim")
+
+                if "nvidia" in gpus:
+                    targets.append((os.path.join(local_appdata, "NVIDIA", "DXCache"), "Cache shaders NVIDIA"))
+                    targets.append((os.path.join(local_appdata, "NVIDIA", "GLCache"), "Cache OpenGL NVIDIA"))
+                if "amd" in gpus:
+                    targets.append((os.path.join(local_appdata, "AMD", "DxCache"), "Cache shaders AMD"))
+                    targets.append((os.path.join(local_appdata, "AMD", "DxcCache"), "Cache DXC AMD"))
+                    targets.append((os.path.join(local_appdata, "AMD", "GLCache"), "Cache OpenGL AMD"))
+                if "intel" in gpus:
+                    targets.append((os.path.join(local_appdata, "Intel", "ShaderCache"), "Cache shaders Intel"))
 
             for folder, name in targets:
+                if self._optimize_cancel.is_set():
+                    cancelled = True
+                    break
                 items, freed = self._opt_clean_folder(folder, name)
                 total_items += items
                 total_freed += freed
+                if self._optimize_cancel.is_set():
+                    cancelled = True
+                    break
+                time.sleep(random.uniform(1.0, 2.0))  # tempo naturel entre chaque etape
 
-            freed_txt = format_freed(total_freed)
-            self._opt_log(f"\n  ✔ Optimisation terminee en {format_duration(time.time() - t0)}", "green")
-            self._opt_log(f"  Elements supprimes : {total_items:,}", "green")
-            self._opt_log(f"{'═'*60}", "cyan")
-            self._opt_log(f"  ✨  NETTOYAGE TERMINE : {freed_txt} LIBERES !", "green")
-            self._opt_log(f"{'═'*60}\n", "cyan")
-            self.root.after(0, lambda: self._set_status(
-                f"✨ Nettoyage termine : {freed_txt} liberes !", self.GREEN))
+            if cancelled:
+                freed_txt = format_freed(total_freed)
+                self._opt_log(f"\n  ⏹ Optimisation interrompue par l'utilisateur.", "yellow")
+                self._opt_log(f"  Elements supprimes avant l'arret : {total_items:,} ({freed_txt})", "yellow")
+                self.root.after(0, lambda: self._set_status(
+                    f"⏹ Optimisation interrompue — {freed_txt} liberes avant l'arret", self.YELLOW))
+            else:
+                freed_txt = format_freed(total_freed)
+                self._opt_log(f"\n  ✔ Optimisation terminee en {format_duration(time.time() - t0)}", "green")
+                self._opt_log(f"  Elements supprimes : {total_items:,}", "green")
+                self._opt_log(f"{'═'*60}", "cyan")
+                self._opt_log(f"  ✨  NETTOYAGE TERMINE : {freed_txt} LIBERES !", "green")
+                self._opt_log(f"{'═'*60}\n", "cyan")
+                self.root.after(0, lambda: self._set_status(
+                    f"✨ Nettoyage termine : {freed_txt} liberes !", self.GREEN))
         except Exception as e:
             self._opt_log(f"  ✖ Erreur pendant l'optimisation : {e}", "red")
             self.root.after(0, lambda: self._set_status("⚠ Optimisation interrompue.", self.RED))
@@ -4120,6 +4559,7 @@ Lien documentation API :
             self._optimize_running = False
             self.root.after(0, lambda: self.btn_optimize.config(
                 state=tk.NORMAL, text="🧹  Lancer l'optimisation"))
+            self.root.after(0, lambda: self.btn_optimize_stop.config(state=tk.DISABLED))
             self.root.after(0, self._refresh_admin_state)
 
     def _write_scan_summary(self, stats, safety, risk_label, risk_color, elapsed):
@@ -4596,7 +5036,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "10.9"
+CURRENT_VERSION = "11.1"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
