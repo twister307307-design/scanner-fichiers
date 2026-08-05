@@ -1,73 +1,11 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v11.2 - Interface Graphique
+Scanner de Fichiers Avancé v11.3 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
-Nouveautés v11.2 :
-  - Onglet Composants : retrait de l'indicateur/avertissement "droits administrateur"
-    (WMI lit le materiel sans elevation, l'avertissement n'avait pas lieu d'etre)
-Nouveautés v11.1 :
-  - Nouvel onglet "🔬 Composants" (a cote de Optimisation) : inventaire materiel complet
-    (CPU, RAM, GPU, carte mere, disques, OS, BIOS, reseau, audio, ecran) via PowerShell/WMI,
-    avec les composants essentiels mis en evidence (★) et etat des droits admin affiche
-Nouveautés v11.0 :
-  - Detection dynamique du GPU (PowerShell/WMI + fallback registre) : nettoie les caches
-    shaders NVIDIA, AMD ou Intel selon le materiel reellement present
-  - Optimisation sans admin : les etapes necessitant les droits (hibernation, DISM) sont
-    desormais ignorees proprement avec un avertissement, sans proposer de relance UAC
-  - Commandes DISM/powercfg executees en synchrone via Popen + poll() : possibilite
-    d'interrompre proprement le processus enfant avec le nouveau bouton "Arreter l'analyse"
-  - Tempo naturel (1-2s) entre chaque etape de l'optimisation
-Nouveautés v10.9 :
-  - Verrous croises : optimisation, scan de fichiers et scan du demarrage ne peuvent
-    plus se lancer en meme temps (meme message d'avertissement que les autres)
-Nouveautés v10.8 :
-  - updater.bat : nettoyage complet des temporaires (exe compile, dist_upd, build_upd,
-    .spec, __pycache__), relance de secours si le remplacement echoue
-  - subprocess.Popen avec close_fds=True + sys.exit(0) pour liberer l'ancien .exe
-Nouveautés v10.7 :
-  - Securisation des scripts .bat generes (updater + desinstalleur) : helper bat_quote()
-    (guillemets + '%' doubles), lancement via subprocess.Popen en liste d'arguments,
-    encodage UTF-8 + chcp 65001, correction du chemin Python312
-Nouveautés v10.6 :
-  - Fallback natif si psutil est absent (RAM via GlobalMemoryStatusEx / sysconf, coeurs via os.cpu_count)
-  - Message de fin de nettoyage plus lisible : "✨ NETTOYAGE TERMINE : X.XX Go LIBERES !"
-Nouveautés v10.5 :
-  - Nouvel onglet dedie "🧹 Optimisation" (entre Demarrage et Stats) : bouton de
-    lancement manuel, etat des droits admin et journal complet du nettoyage
-Nouveautés v10.4 :
-  - L'optimisation Windows propose de relancer l'appli en administrateur si besoin
-    (elevation UAC + reprise automatique de l'optimisation au redemarrage)
-Nouveautés v10.3 :
-  - Nouvelle case "Optimisation Windows" (section Actions) : nettoyage systeme en fin de scan
-    (hibernation off, DISM WinSxS, %TEMP%, Temp systeme, Prefetch, caches DirectX/NVIDIA)
-Nouveautés v10.2 :
-  - Popup de saisie modale quand la clé API VirusTotal est manquante au lancement du scan
-    (champ masqué, bouton œil, validation intégrée, relance automatique du scan)
-Nouveautés v4.6 :
-  - Clé API VirusTotal toujours visible sous la case (pas besoin de cocher d'abord)
-Nouveautés v4.5 :
-  - Ajout de .icns et .3mf dans la liste blanche entropie (faux positifs corrigés)
-    (.icns = icônes macOS compressées, .3mf = fichiers 3D = ZIP interne)
-Nouveautés v4.4 :
-  - Doublons stricts (même chemin relatif) activé en permanence et automatiquement
-    (suppression de la case à cocher — comportement h24 sans intervention)
-Nouveautés v4.3 :
-  - Option doublons stricts : vérification du chemin relatif en plus du contenu
-    (évite les faux doublons entre dossiers frères, ex: profils Bambu Studio)
-Nouveautés v4.0 :
-  - Scan planifié / automatique (toutes les X heures)
-  - Filtre par taille minimale/maximale de fichier
-  - Vérification VirusTotal API (hash MD5)
-  - Score de dangerosité (1-10) par fichier suspect
-  - Détection fichiers chiffrés suspects (ransomware)
-  - Graphique camembert par type de fichier
-  - Recherche/filtre dans les onglets
-  - Tri des colonnes dans les onglets Suspects & Doublons (Treeview)
-  - Miniature aperçu au survol des fichiers image
 """
 
 import os
-import sys
+import sysA
 import hashlib
 import time
 import random
@@ -1096,7 +1034,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v11.2")
+        self.root.title("Scanner de Fichiers Avancé v11.3")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1657,7 +1595,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v11.2",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v11.3",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -5011,7 +4949,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "11.2"
+CURRENT_VERSION = "11.3"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
