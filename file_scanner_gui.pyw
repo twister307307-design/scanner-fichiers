@@ -5,7 +5,7 @@ Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
 """
 
 import os
-import sysA
+import sys
 import hashlib
 import time
 import random
