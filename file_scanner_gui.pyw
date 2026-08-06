@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v11.3 - Interface Graphique
+Scanner de Fichiers Avancé v11.4 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
 """
 
@@ -1034,7 +1034,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v11.3")
+        self.root.title("Scanner de Fichiers Avancé v11.4")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1496,76 +1496,41 @@ class ScannerApp:
         self.root.focus_force()
 
     def _on_close(self):
-        """Demande à l'utilisateur : réduire en arrière-plan ou fermer complètement."""
-        # Si un scan est en cours, proposer arrière-plan par défaut
-        scanning = self.scan_thread is not None and self.scan_thread.is_alive()
+        """Ferme l'application. Bloque si un scan/analyse/optimisation est en cours,
+        avec le meme message d'avertissement que pour les autres verrous croises."""
+        if self.scan_thread is not None and self.scan_thread.is_alive():
+            messagebox.showwarning(
+                "Scan en cours",
+                "Un scan de fichiers est actuellement en cours.\n\n"
+                "Veuillez attendre qu'il se termine avant de fermer l'application.")
+            return
+        if self._persist_running:
+            messagebox.showwarning(
+                "Analyse en cours",
+                "Un scan du démarrage est actuellement en cours.\n\n"
+                "Veuillez attendre qu'il se termine avant de fermer l'application.")
+            return
+        if getattr(self, "_optimize_running", False):
+            messagebox.showwarning(
+                "Optimisation en cours",
+                "Une optimisation Windows est actuellement en cours.\n\n"
+                "Veuillez attendre qu'elle se termine avant de fermer l'application.")
+            return
+        if getattr(self, "_hardware_running", False):
+            messagebox.showwarning(
+                "Analyse en cours",
+                "Une analyse des composants est actuellement en cours.\n\n"
+                "Veuillez attendre qu'elle se termine avant de fermer l'application.")
+            return
 
-        win = tk.Toplevel(self.root)
-        win.title("Fermer le scanner")
-        win.resizable(False, False)
-        win.configure(bg=self.BG)
-        win.grab_set()
+        self.cfg["geometry"] = self.root.geometry()
+        self.cfg["last_scan_roots"] = list(self.roots_list.get(0, tk.END))
+        save_config(self.cfg)
+        if self._schedule_timer is not None:
+            self._schedule_timer.cancel()
+        self.root.destroy()
 
-        self.root.update_idletasks()
-        px = self.root.winfo_x() + self.root.winfo_width()  // 2
-        py = self.root.winfo_y() + self.root.winfo_height() // 2
-        w, h = 460, 210
-        win.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
-
-        tk.Label(win, text="Que voulez-vous faire ?",
-                 font=("Consolas", 10, "bold"), fg=self.ACCENT, bg=self.BG
-                 ).pack(pady=(18, 4))
-
-        if scanning:
-            info = "Un scan est en cours.\nReduisez dans la barre des taches pour le laisser tourner."
-        else:
-            info = "Reduire = l'appli reste dans la barre des taches.\nFermer = quitte completement."
-        tk.Label(win, text=info, font=("Consolas", 8),
-                 fg=self.DIMFG, bg=self.BG, justify="center").pack(pady=(0, 14))
-
-        btn_row = tk.Frame(win, bg=self.BG)
-        btn_row.pack()
-
-        def _background():
-            win.destroy()
-            self.cfg["geometry"] = self.root.geometry()
-            self.cfg["last_scan_roots"] = list(self.roots_list.get(0, tk.END))
-            save_config(self.cfg)
-            # Minimiser dans la barre des taches (reste visible et cliquable)
-            self.root.iconify()
-            self._hidden = True
-
-        def _quit_full():
-            # Bloquer si un scan est en cours
-            if self.scan_thread is not None and self.scan_thread.is_alive():
-                messagebox.showwarning(
-                    "Scan en cours",
-                    "Un scan est actuellement en cours.\n\n"
-                    "Veuillez l'arreter avant de fermer completement l'application.\n"
-                    "Vous pouvez aussi la reduire en arriere-plan.")
-                return
-            win.destroy()
-            self.cfg["geometry"] = self.root.geometry()
-            self.cfg["last_scan_roots"] = list(self.roots_list.get(0, tk.END))
-            save_config(self.cfg)
-            if self._schedule_timer is not None:
-                self._schedule_timer.cancel()
-            self.root.destroy()
-
-        tk.Button(btn_row, text="🔽  Réduire",
-                  font=("Consolas", 8, "bold"), bg=self.BG3, fg=self.ACCENT,
-                  activebackground=self.BG2, activeforeground=self.ACCENT,
-                  borderwidth=0, padx=14, pady=6, cursor="hand2", relief=tk.FLAT,
-                  command=_background).pack(side=tk.LEFT, padx=6)
-
-        tk.Button(btn_row, text="✕  Fermer complètement",
-                  font=("Consolas", 8), bg=self.BG3, fg=self.RED,
-                  activebackground=self.BG2, activeforeground=self.RED,
-                  borderwidth=0, padx=14, pady=6, cursor="hand2", relief=tk.FLAT,
-                  command=_quit_full).pack(side=tk.LEFT, padx=6)
-
-        win.bind("<Escape>", lambda e: win.destroy())
-
+    # ── Thème
     # ── Thème ──────────────────────────────────────────────────────────────────
 
     def _apply_theme(self, name, init=False):
@@ -1595,7 +1560,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v11.3",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v11.4",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1901,29 +1866,60 @@ class ScannerApp:
             c.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
             Tooltip(c, c._val_label.cget("text"))
 
-        # Notebook
-        notebook = ttk.Notebook(right)
+        # Notebook — deux categories : Basique (scan de fichiers) et Avancé (optimisation/materiel)
+        notebook_outer = ttk.Notebook(right)
+        self.notebook_outer = notebook_outer
+        notebook_outer.pack(fill=tk.BOTH, expand=True)
+        self._style_notebook(notebook_outer)
+
+        basique_frame = tk.Frame(notebook_outer, bg=self.BG)
+        notebook_outer.add(basique_frame, text="🧰 Basique")
+        notebook = ttk.Notebook(basique_frame)
         self.notebook = notebook
         notebook.pack(fill=tk.BOTH, expand=True)
         self._style_notebook(notebook)
-        self.log_all       = self._log_tab(notebook, "📋 Journal")
-        self.log_clean, self.tree_clean = self._clean_tab(notebook)
-        self.log_corrupted = self._log_tab(notebook, "🔴 Corrompus", section_title="FICHIERS CORROMPUS")
-        self.log_suspects, self.btn_open_suspects = self._suspects_tab(notebook)
+
+        avance_frame = tk.Frame(notebook_outer, bg=self.BG)
+        notebook_outer.add(avance_frame, text="⚙️ Avancé")
+        notebook_avance = ttk.Notebook(avance_frame)
+        self.notebook_avance = notebook_avance
+        notebook_avance.pack(fill=tk.BOTH, expand=True)
+        self._style_notebook(notebook_avance)
+
+        # Sous-categorie "Résultats" : vue d'ensemble et decouvertes du scan
+        resultats_frame = tk.Frame(notebook, bg=self.BG)
+        notebook.add(resultats_frame, text="🔍 Résultats")
+        notebook_resultats = ttk.Notebook(resultats_frame)
+        notebook_resultats.pack(fill=tk.BOTH, expand=True)
+        self._style_notebook(notebook_resultats)
+
+        # Sous-categorie "Problèmes" : tout ce qui a ete signale comme suspect/errone
+        problemes_frame = tk.Frame(notebook, bg=self.BG)
+        notebook.add(problemes_frame, text="⚠️ Problèmes")
+        notebook_problemes = ttk.Notebook(problemes_frame)
+        notebook_problemes.pack(fill=tk.BOTH, expand=True)
+        self._style_notebook(notebook_problemes)
+
+        self.log_all       = self._log_tab(notebook_resultats, "📋 Journal")
+        self.log_clean, self.tree_clean = self._clean_tab(notebook_resultats)
+        self.log_suspects, self.btn_open_suspects = self._suspects_tab(notebook_resultats)
         self.log_dupes, self.btn_del_dupes = self._log_tab_with_action(
-            notebook, "🟣 Doublons", "🗑  Supprimer les doublons", self._manual_delete_dupes, self.PURPLE,
+            notebook_resultats, "🟣 Doublons", "🗑  Supprimer les doublons", self._manual_delete_dupes, self.PURPLE,
             section_title="DOUBLONS DÉTECTÉS")
-        self.log_errors    = self._log_tab(notebook, "🟠 Chiffrés", section_title="FICHIERS CHIFFRÉS")
-        self.log_dblext    = self._log_tab(notebook, "🔺 Anomalies", section_title="ANOMALIES DÉTECTÉES")
-        self.log_access_errors = self._log_tab(notebook, "🟡 Erreurs accès", section_title="ERREURS D'ACCÈS")
+
+        self.log_corrupted = self._log_tab(notebook_problemes, "🔴 Corrompus", section_title="FICHIERS CORROMPUS")
+        self.log_errors    = self._log_tab(notebook_problemes, "🟠 Chiffrés", section_title="FICHIERS CHIFFRÉS")
+        self.log_dblext    = self._log_tab(notebook_problemes, "🔺 Anomalies", section_title="ANOMALIES DÉTECTÉES")
+        self.log_access_errors = self._log_tab(notebook_problemes, "🟡 Erreurs accès", section_title="ERREURS D'ACCÈS")
+
         self.log_persist, self._persist_frame = self._log_tab(notebook, "🚀 Démarrage", return_frame=True, section_title="PROGRAMMES AU DÉMARRAGE")
-        self.log_optimize  = self._optimize_tab(notebook)
-        self.log_hardware  = self._hardware_tab(notebook)
         self.tab_stats     = self._build_stats_tab(notebook)
+        self.log_optimize  = self._optimize_tab(notebook_avance)
+        self.log_hardware  = self._hardware_tab(notebook_avance)
 
         # ── Barre de recherche globale ──
         search_frame = tk.Frame(right, bg=self.BG2, pady=3)
-        search_frame.pack(fill=tk.X, before=notebook)
+        search_frame.pack(fill=tk.X, before=notebook_outer)
         tk.Label(search_frame, text="🔍", font=("Consolas", 9), fg=self.DIMFG, bg=self.BG2).pack(side=tk.LEFT, padx=(6, 2))
         self.var_search = tk.StringVar()
         self.var_search.trace_add("write", lambda *a: self._filter_suspects())
@@ -1936,7 +1932,7 @@ class ScannerApp:
 
         # ── Barre de progression graphique coloree ──
         prog_frame = tk.Frame(right, bg=self.BG2)
-        prog_frame.pack(fill=tk.X, before=notebook, pady=(0, 2))
+        prog_frame.pack(fill=tk.X, before=notebook_outer, pady=(0, 2))
         self._prog_canvas = tk.Canvas(prog_frame, height=18, bg=self.BG3,
                                       highlightthickness=0, bd=0)
         self._prog_canvas.pack(fill=tk.X, padx=6, pady=2)
@@ -2521,7 +2517,8 @@ Lien documentation API :
         self.btn_hardware.config(state=tk.DISABLED, text="🔬  Analyse en cours…")
         self._set_status("🔬 Analyse des composants en cours…", self.ACCENT)
         try:
-            self.notebook.select(self.log_hardware.master)
+            self.notebook_outer.select(1)
+            self.notebook_avance.select(self.log_hardware.master)
         except Exception:
             pass
         threading.Thread(target=self._hardware_worker, daemon=True).start()
@@ -3380,6 +3377,7 @@ Lien documentation API :
         # Basculer sur l'onglet Demarrage (sauf en mode auto au lancement)
         if not auto:
             try:
+                self.notebook_outer.select(0)
                 self.notebook.select(self._persist_frame)
             except Exception:
                 pass
@@ -4244,9 +4242,10 @@ Lien documentation API :
 
     # ── Optimisation Windows ───────────────────────────────────────────────────
 
-    def _run_optimization(self, resumed=False):
+    def _run_optimization(self):
         """Nettoyage systeme : hibernation, DISM, TEMP, Prefetch, caches GPU.
-        Exige les droits admin : propose de relancer l'appli en administrateur sinon."""
+        Exige les droits admin : propose de relancer l'appli en administrateur sinon.
+        Aucune reprise automatique au redemarrage — l'optimisation reste manuelle."""
         if os.name != "nt":
             self._log(self.log_optimize, "\n⚠  Optimisation : disponible uniquement sous Windows.", "yellow")
             return
@@ -4281,9 +4280,22 @@ Lien documentation API :
         except Exception:
             is_admin = False
 
-        # ── Confirmation ──
-        admin_note = ("" if is_admin else
-            "\n\n⚠ Application non-administrateur : hibernation et DISM seront ignores.")
+        # ── Pas admin : proposer l'elevation UAC (pas de reprise auto au redemarrage) ──
+        if not is_admin:
+            if messagebox.askyesno(
+                    "Droits administrateur requis",
+                    "L'optimisation Windows necessite les droits administrateur\n"
+                    "(hibernation, DISM, Temp systeme, Prefetch).\n\n"
+                    "Relancer l'application en tant qu'administrateur ?\n\n"
+                    "Vous devrez relancer l'optimisation manuellement une fois "
+                    "l'application rouverte."):
+                self._relaunch_as_admin()
+            else:
+                self._log(self.log_optimize,
+                          "\nℹ  Optimisation annulee (droits administrateur refuses).", "dim")
+            return
+
+        # ── Deja admin : confirmation normale ──
         if not messagebox.askyesno(
                 "Optimisation Windows",
                 "Lancer l'optimisation Windows ?\n\n"
@@ -4292,8 +4304,7 @@ Lien documentation API :
                 "  • Vidage de %TEMP% et du Temp systeme\n"
                 "  • Vidage du Prefetch\n"
                 "  • Vidage des caches GPU (selon le materiel detecte)\n\n"
-                "Ces fichiers sont regeneres automatiquement par Windows."
-                + admin_note):
+                "Ces fichiers sont regeneres automatiquement par Windows."):
             self._log(self.log_optimize, "\nℹ  Optimisation annulee.", "dim")
             return
 
@@ -4303,12 +4314,53 @@ Lien documentation API :
         self.btn_optimize.config(state=tk.DISABLED, text="🧹  Optimisation en cours…")
         self.btn_optimize_stop.config(state=tk.NORMAL)
         try:
-            self.notebook.select(self.log_optimize.master)
+            self.notebook_outer.select(1)
+            self.notebook_avance.select(self.log_optimize.master)
         except Exception:
             pass
-        if resumed:
-            self._log(self.log_optimize, "\n🔑  Relance en administrateur reussie.", "green")
         threading.Thread(target=self._optimize_worker, args=(is_admin,), daemon=True).start()
+
+    def _relaunch_as_admin(self):
+        """Relance l'application avec elevation UAC. Aucune reprise automatique :
+        une fois relancee, l'optimisation doit etre declenchee manuellement."""
+        import ctypes
+        is_frozen = getattr(sys, "frozen", False)
+
+        try:
+            self.cfg["geometry"] = self.root.geometry()
+            save_config(self.cfg)
+        except Exception:
+            pass
+
+        try:
+            if is_frozen:
+                exe    = sys.executable
+                params = ""
+            else:
+                exe = sys.executable.replace("python.exe", "pythonw.exe")
+                if not os.path.exists(exe):
+                    exe = sys.executable
+                params = f'"{os.path.abspath(__file__)}"'
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, None, 1)
+        except Exception as e:
+            ret = 0
+            self._log(self.log_optimize, f"\n✖  Relance administrateur impossible : {e}", "red")
+
+        if ret and int(ret) > 32:
+            # Elevation acceptee : fermer l'instance actuelle (rien a reprendre au redemarrage)
+            if self._schedule_timer is not None:
+                try:
+                    self._schedule_timer.cancel()
+                except Exception:
+                    pass
+            self.root.destroy()
+        else:
+            self._log(self.log_optimize,
+                      "\n⚠  Elevation refusee — optimisation annulee.", "yellow")
+            messagebox.showwarning(
+                "Elevation refusee",
+                "L'application n'a pas pu etre relancee en administrateur.\n"
+                "L'optimisation a ete annulee.")
 
     def _opt_log(self, text, tag=None):
         """Log thread-safe vers l'onglet Journal."""
@@ -4949,7 +5001,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "11.3"
+CURRENT_VERSION = "11.4"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
