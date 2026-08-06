@@ -2118,7 +2118,7 @@ class ScannerApp:
         help_path = os.path.join(os.path.expanduser("~"), "aide_virustotal.txt")
         content = """\
 ╔══════════════════════════════════════════════════════════════╗
-║         AIDE — Clé API VirusTotal                           ║
+║         AIDE — Clé API VirusTotal                            ║
 ╚══════════════════════════════════════════════════════════════╝
 
 VirusTotal est un service GRATUIT qui analyse les fichiers avec
