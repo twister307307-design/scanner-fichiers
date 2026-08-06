@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Scanner de Fichiers Avancé v11.4 - Interface Graphique
+Scanner de Fichiers Avancé v11.5 - Interface Graphique
 Scan complet • Fichiers corrompus • Doublons • Erreurs en temps réel
 """
 
@@ -1034,7 +1034,7 @@ class ScannerApp:
         self.root = root
         self.cfg  = load_config()
 
-        self.root.title("Scanner de Fichiers Avancé v11.4")
+        self.root.title("Scanner de Fichiers Avancé v11.5")
         self.root.geometry(self.cfg.get("geometry", "1100x760"))
         self.root.minsize(900, 620)
 
@@ -1560,7 +1560,7 @@ class ScannerApp:
         # ── Header ──
         header = tk.Frame(self.root, bg=self.HEADER, pady=12)
         header.pack(fill=tk.X)
-        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v11.4",
+        tk.Label(header, text="🔍  SCANNER DE FICHIERS AVANCÉ  v11.5",
                  font=("Consolas", 16, "bold"), fg=self.ACCENT, bg=self.HEADER).pack()
         tk.Label(header, text="Doublons  •  Corrompus  •  Suspects  •  VirusTotal  •  Erreurs en temps réel",
                  font=("Consolas", 9), fg=self.DIMFG, bg=self.HEADER).pack()
@@ -1902,11 +1902,11 @@ class ScannerApp:
 
         self.log_all       = self._log_tab(notebook_resultats, "📋 Journal")
         self.log_clean, self.tree_clean = self._clean_tab(notebook_resultats)
-        self.log_suspects, self.btn_open_suspects = self._suspects_tab(notebook_resultats)
         self.log_dupes, self.btn_del_dupes = self._log_tab_with_action(
             notebook_resultats, "🟣 Doublons", "🗑  Supprimer les doublons", self._manual_delete_dupes, self.PURPLE,
             section_title="DOUBLONS DÉTECTÉS")
 
+        self.log_suspects, self.btn_open_suspects = self._suspects_tab(notebook_problemes)
         self.log_corrupted = self._log_tab(notebook_problemes, "🔴 Corrompus", section_title="FICHIERS CORROMPUS")
         self.log_errors    = self._log_tab(notebook_problemes, "🟠 Chiffrés", section_title="FICHIERS CHIFFRÉS")
         self.log_dblext    = self._log_tab(notebook_problemes, "🔺 Anomalies", section_title="ANOMALIES DÉTECTÉES")
@@ -5001,7 +5001,7 @@ GITHUB_USER     = "twister307307-design"
 GITHUB_REPO     = "scanner-fichiers"
 GITHUB_RAW_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/file_scanner_gui.pyw"
 GITHUB_VER_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/VERSION"
-CURRENT_VERSION = "11.4"
+CURRENT_VERSION = "11.5"
 
 LOCK_PATH   = os.path.join(os.path.expanduser("~"), ".scanner_running.lock")
 SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".scanner_show.signal")
